@@ -16,11 +16,23 @@ import (
 type Money int64
 
 // Account is a holder of a balance in a single currency.
+//
+// Two figures matter for a wallet:
+//   - Balance is the settled money the account owns.
+//   - Held is the portion reserved by active authorization holds.
+//
+// Available (Balance - Held) is what can actually be spent or newly held. This
+// is the model behind a card authorization, a hotel pre-auth, or reserving a
+// wager: the money is fenced off before it moves.
 type Account struct {
 	ID       string
 	Currency string
 	Balance  Money
+	Held     Money
 }
+
+// Available returns the spendable balance: settled funds minus active holds.
+func (a Account) Available() Money { return a.Balance - a.Held }
 
 // Entry is one side of a transfer posted against a single account. Amount is
 // signed: negative for a debit (money leaving), positive for a credit (money
@@ -65,6 +77,52 @@ type TransferRequest struct {
 	Amount         Money
 }
 
+// HoldStatus is the lifecycle state of an authorization hold.
+type HoldStatus string
+
+const (
+	HoldActive   HoldStatus = "active"   // funds reserved, not yet moved
+	HoldCaptured HoldStatus = "captured" // settled: funds moved (fully or partially)
+	HoldVoided   HoldStatus = "voided"   // released without moving funds
+	HoldExpired  HoldStatus = "expired"  // released automatically after ExpiresAt
+)
+
+// Hold is an authorization: it reserves funds in the source account so they
+// cannot be spent twice, before deciding whether to capture (move) or release
+// them. A hold moves no money until it is captured. This is the primitive behind
+// card auth-then-capture, wallet reserve-then-settle, and placing then settling
+// a wager.
+type Hold struct {
+	ID                string
+	IdempotencyKey    string
+	FromAccountID     string
+	ToAccountID       string
+	Amount            Money // reserved amount
+	Captured          Money // amount actually captured (<= Amount)
+	Status            HoldStatus
+	CreatedAt         time.Time
+	ExpiresAt         time.Time // zero means no expiry
+	CaptureTransferID string    // set once captured
+}
+
+// AuthorizeRequest reserves funds. ExpiresIn, if > 0, sets a deadline after
+// which the hold is released automatically by ExpireHolds.
+type AuthorizeRequest struct {
+	IdempotencyKey string
+	FromAccountID  string
+	ToAccountID    string
+	Amount         Money
+	ExpiresIn      time.Duration
+}
+
+// CaptureRequest settles all or part of a hold. Amount must be > 0 and <= the
+// hold's reserved amount; any uncaptured remainder is released.
+type CaptureRequest struct {
+	IdempotencyKey string
+	HoldID         string
+	Amount         Money
+}
+
 // Errors returned by the ledger. Callers can match on these with errors.Is.
 var (
 	ErrInvalidAmount         = errors.New("ledger: amount must be positive")
@@ -74,4 +132,8 @@ var (
 	ErrCurrencyMismatch      = errors.New("ledger: account currencies do not match")
 	ErrInsufficientFunds     = errors.New("ledger: insufficient funds")
 	ErrIdempotencyConflict   = errors.New("ledger: idempotency key reused with different parameters")
+	ErrHoldNotFound          = errors.New("ledger: hold not found")
+	ErrHoldNotActive         = errors.New("ledger: hold is not active")
+	ErrHoldExpired           = errors.New("ledger: hold has expired")
+	ErrCaptureExceedsHold    = errors.New("ledger: capture amount exceeds the held amount")
 )

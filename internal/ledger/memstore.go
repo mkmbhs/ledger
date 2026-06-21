@@ -17,8 +17,11 @@ type MemStore struct {
 	mu               sync.Mutex
 	accounts         map[string]Account
 	transfers        map[string]Transfer
-	byIdemKey        map[string]string  // idempotency key -> transfer ID
+	byIdemKey        map[string]string  // transfer idempotency key -> transfer ID
 	entriesByAccount map[string][]Entry // account ID -> its entries, oldest first
+	holds            map[string]Hold    // hold ID -> hold
+	holdByKey        map[string]string  // authorize idempotency key -> hold ID
+	captureByKey     map[string]string  // capture idempotency key -> transfer ID
 	now              func() time.Time
 }
 
@@ -29,6 +32,9 @@ func NewMemStore() *MemStore {
 		transfers:        make(map[string]Transfer),
 		byIdemKey:        make(map[string]string),
 		entriesByAccount: make(map[string][]Entry),
+		holds:            make(map[string]Hold),
+		holdByKey:        make(map[string]string),
+		captureByKey:     make(map[string]string),
 		now:              time.Now,
 	}
 }
@@ -87,7 +93,9 @@ func (s *MemStore) ApplyTransfer(_ context.Context, req TransferRequest) (Transf
 	if from.Currency != to.Currency {
 		return Transfer{}, ErrCurrencyMismatch
 	}
-	if from.Balance < req.Amount {
+	// A transfer may only spend AVAILABLE funds: money reserved by an active
+	// hold cannot be moved out from under it.
+	if from.Available() < req.Amount {
 		return Transfer{}, ErrInsufficientFunds
 	}
 
@@ -141,6 +149,174 @@ func (s *MemStore) AccountEntries(_ context.Context, accountID string) ([]Entry,
 	out := make([]Entry, len(src))
 	copy(out, src)
 	return out, nil
+}
+
+// Authorize reserves req.Amount in the source account: it raises Held (lowering
+// Available) without moving any money, and records an active Hold.
+func (s *MemStore) Authorize(_ context.Context, req AuthorizeRequest, now time.Time) (Hold, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if id, ok := s.holdByKey[req.IdempotencyKey]; ok {
+		existing := s.holds[id]
+		if existing.FromAccountID != req.FromAccountID ||
+			existing.ToAccountID != req.ToAccountID ||
+			existing.Amount != req.Amount {
+			return Hold{}, ErrIdempotencyConflict
+		}
+		return existing, nil
+	}
+
+	from, ok := s.accounts[req.FromAccountID]
+	if !ok {
+		return Hold{}, ErrAccountNotFound
+	}
+	to, ok := s.accounts[req.ToAccountID]
+	if !ok {
+		return Hold{}, ErrAccountNotFound
+	}
+	if from.Currency != to.Currency {
+		return Hold{}, ErrCurrencyMismatch
+	}
+	if from.Available() < req.Amount {
+		return Hold{}, ErrInsufficientFunds
+	}
+
+	from.Held += req.Amount
+	s.accounts[from.ID] = from
+
+	id := newID()
+	h := Hold{
+		ID:             id,
+		IdempotencyKey: req.IdempotencyKey,
+		FromAccountID:  req.FromAccountID,
+		ToAccountID:    req.ToAccountID,
+		Amount:         req.Amount,
+		Status:         HoldActive,
+		CreatedAt:      now,
+	}
+	if req.ExpiresIn > 0 {
+		h.ExpiresAt = now.Add(req.ExpiresIn)
+	}
+	s.holds[id] = h
+	s.holdByKey[req.IdempotencyKey] = id
+	return h, nil
+}
+
+// Capture settles all or part of an active hold. It debits the source by the
+// captured amount, credits the destination, releases the entire reservation
+// (so any uncaptured remainder returns to Available), and records a transfer.
+func (s *MemStore) Capture(_ context.Context, req CaptureRequest, now time.Time) (Transfer, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if id, ok := s.captureByKey[req.IdempotencyKey]; ok {
+		return s.transfers[id], nil
+	}
+
+	h, ok := s.holds[req.HoldID]
+	if !ok {
+		return Transfer{}, ErrHoldNotFound
+	}
+	if h.Status != HoldActive {
+		return Transfer{}, ErrHoldNotActive
+	}
+	if !h.ExpiresAt.IsZero() && !now.Before(h.ExpiresAt) {
+		s.releaseHold(&h, HoldExpired) // an expired hold cannot be captured
+		return Transfer{}, ErrHoldExpired
+	}
+	if req.Amount <= 0 {
+		return Transfer{}, ErrInvalidAmount
+	}
+	if req.Amount > h.Amount {
+		return Transfer{}, ErrCaptureExceedsHold
+	}
+
+	from := s.accounts[h.FromAccountID]
+	to := s.accounts[h.ToAccountID]
+	from.Balance -= req.Amount
+	from.Held -= h.Amount // release the whole reservation; remainder returns to Available
+	to.Balance += req.Amount
+	s.accounts[from.ID] = from
+	s.accounts[to.ID] = to
+
+	tid := newID()
+	t := Transfer{
+		ID:             tid,
+		IdempotencyKey: req.IdempotencyKey,
+		FromAccountID:  h.FromAccountID,
+		ToAccountID:    h.ToAccountID,
+		Amount:         req.Amount,
+		Currency:       from.Currency,
+		Status:         StatusPosted,
+		CreatedAt:      now,
+		Entries: []Entry{
+			{ID: newID(), TransferID: tid, AccountID: h.FromAccountID, Amount: -req.Amount, CreatedAt: now},
+			{ID: newID(), TransferID: tid, AccountID: h.ToAccountID, Amount: req.Amount, CreatedAt: now},
+		},
+	}
+	s.transfers[tid] = t
+	for _, e := range t.Entries {
+		s.entriesByAccount[e.AccountID] = append(s.entriesByAccount[e.AccountID], e)
+	}
+	s.captureByKey[req.IdempotencyKey] = tid
+
+	h.Status = HoldCaptured
+	h.Captured = req.Amount
+	h.CaptureTransferID = tid
+	s.holds[h.ID] = h
+	return t, nil
+}
+
+// Void releases an active hold without moving money. Voiding an already-voided
+// hold is a no-op (idempotent).
+func (s *MemStore) Void(_ context.Context, holdID string) (Hold, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	h, ok := s.holds[holdID]
+	if !ok {
+		return Hold{}, ErrHoldNotFound
+	}
+	if h.Status == HoldVoided {
+		return h, nil
+	}
+	if h.Status != HoldActive {
+		return Hold{}, ErrHoldNotActive
+	}
+	s.releaseHold(&h, HoldVoided)
+	return h, nil
+}
+
+func (s *MemStore) GetHold(_ context.Context, id string) (Hold, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	h, ok := s.holds[id]
+	return h, ok, nil
+}
+
+// ExpireHolds releases every active hold whose deadline has passed.
+func (s *MemStore) ExpireHolds(_ context.Context, now time.Time) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	count := 0
+	for _, h := range s.holds {
+		if h.Status == HoldActive && !h.ExpiresAt.IsZero() && !now.Before(h.ExpiresAt) {
+			s.releaseHold(&h, HoldExpired)
+			count++
+		}
+	}
+	return count, nil
+}
+
+// releaseHold returns a hold's reserved funds to its source account's available
+// balance and marks the hold with a terminal status. The caller holds the mutex.
+func (s *MemStore) releaseHold(h *Hold, status HoldStatus) {
+	from := s.accounts[h.FromAccountID]
+	from.Held -= h.Amount
+	s.accounts[from.ID] = from
+	h.Status = status
+	s.holds[h.ID] = *h
 }
 
 func newID() string {
