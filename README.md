@@ -97,6 +97,39 @@ Run with the race detector (`make race`):
 
 ~90% statement coverage; `go vet` and `gofmt` clean.
 
+## Architecture
+
+REST and gRPC are thin transports over one domain `Service`. A money move and its
+event are written in the **same database transaction** (the outbox), so they can
+never disagree. A separate relay drains the outbox to Kafka at-least-once, using
+`FOR UPDATE SKIP LOCKED` so it stays correct even if it is split into its own
+worker for horizontal scale.
+
+```mermaid
+flowchart LR
+    client([Client])
+    subgraph svc["ledger service"]
+        rest["REST :8080"]
+        grpc["gRPC :9090"]
+        core["Service / domain core"]
+        relay["Outbox relay"]
+    end
+    pg[("PostgreSQL<br/>accounts · entries<br/>holds · outbox")]
+    kafka[["Kafka<br/>transfer.posted"]]
+    consumer([Downstream consumer])
+    prom["Prometheus /metrics"]
+
+    client -->|HTTP| rest
+    client -->|gRPC| grpc
+    rest --> core
+    grpc --> core
+    core -->|"money move + event<br/>in one transaction"| pg
+    relay -->|"FOR UPDATE SKIP LOCKED<br/>publish, then stamp"| pg
+    relay -->|at-least-once| kafka
+    kafka --> consumer
+    svc -.->|scraped| prom
+```
+
 ## Running the full stack
 
 ```
@@ -120,6 +153,12 @@ grpcurl -plaintext -d '{"id":"alice"}' localhost:9090 ledger.v1.LedgerService/Ge
 
 # the transfer.posted event lands on Kafka:
 docker compose exec redpanda rpk topic consume ledger.transfers --num 1
+
+# watch events with the example consumer (joins the compose network):
+docker compose --profile tools up consumer
+
+# drive concurrent load and check the money-conservation invariant:
+go run ./cmd/loadtest -accounts 50 -workers 32 -duration 10s
 ```
 
 Prometheus is at `:9091`, Grafana (anonymous) at `:3000`.
@@ -136,6 +175,8 @@ internal/metrics/       Prometheus instrumentation (HTTP middleware + gRPC inter
 proto/ledger/v1/        the gRPC contract
 migrations/             PostgreSQL schema (embedded; applied on startup)
 cmd/server/             the service: REST + gRPC + metrics + outbox relay, graceful shutdown
+cmd/consumer/           an example Kafka consumer that prints transfer.posted events
+cmd/loadtest/           a concurrent load generator that also asserts money is conserved
 cmd/ledger/             a tiny library demo
 Dockerfile · docker-compose.yml · deploy/   the runnable stack
 ```

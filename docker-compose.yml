@@ -50,6 +50,18 @@ services:
       redpanda:
         condition: service_healthy
 
+  # Example downstream consumer of the transfer.posted events. Opt-in:
+  #   docker compose --profile tools up consumer
+  # then POST a transfer over REST and watch the event print in its logs.
+  consumer:
+    build: .
+    profiles: ["tools"]
+    entrypoint: ["/ledger-consumer"]
+    command: ["-brokers", "redpanda:9092", "-topic", "ledger.transfers", "-group", "ledger-example-consumer"]
+    depends_on:
+      redpanda:
+        condition: service_healthy
+
   prometheus:
     image: prom/prometheus:latest
     volumes:
