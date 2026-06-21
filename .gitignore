@@ -1,0 +1,15 @@
+# Built binaries (root-anchored so they never match the internal/ledger or
+# cmd/ledger SOURCE directories — an unanchored "ledger" would).
+/ledger
+/server
+/bin/
+*.exe
+
+# Test / coverage
+*.out
+coverage.*
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
