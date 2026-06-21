@@ -69,10 +69,12 @@ the `Service`; atomic, idempotent application lives behind the `Store` interface
 - `MemStore` — an in-memory reference implementation. A single mutex makes every
   operation serializable, so it is the simplest possible *specification* of
   correctness, and the concurrency tests run against it.
-- PostgreSQL (see [`migrations/0001_init.sql`](migrations/0001_init.sql)) — a
-  `UNIQUE` constraint on the idempotency key plus `SELECT ... FOR UPDATE` inside
-  one transaction give the same guarantees at scale. *(Implementation is the next
-  milestone — see Roadmap.)*
+- PostgreSQL (`internal/store/postgres`, schema in
+  [`migrations/0001_init.sql`](migrations/0001_init.sql)) — a `UNIQUE` constraint
+  on the idempotency key plus `SELECT ... FOR UPDATE` (in a deadlock-safe, sorted
+  lock order) inside one transaction give the same guarantees at scale. A
+  testcontainers conformance suite runs the same scenarios as the in-memory
+  reference against a real Postgres.
 
 ## What the tests prove
 
@@ -107,17 +109,23 @@ internal/ledger/
   holds_test.go    the hold lifecycle proofs
   fuzz_test.go     property-based invariant fuzzing
   example_test.go  a runnable godoc example
+internal/store/postgres/
+  store.go / transfers.go / holds.go   the PostgreSQL Store (pgx, FOR UPDATE)
+  conformance_test.go                  testcontainers suite (build tag: integration)
 migrations/0001_init.sql   the PostgreSQL schema (accounts, transfers, entries, holds)
 cmd/ledger/main.go         a tiny runnable demo
 ```
+
+Integration tests are behind a build tag, so the default `go test ./...` needs no
+database; run them with `go test -tags=integration ./...` (requires Docker).
 
 ## Roadmap
 
 - [x] **M1** — double-entry core, idempotent transfers, concurrency- and fuzz-proven.
 - [x] **Holds** — authorize / capture / void / expire, with available-balance semantics.
-- [ ] **M2** — PostgreSQL `Store` (`FOR UPDATE` + unique idempotency key) + integration tests.
+- [x] **M2** — PostgreSQL `Store` (`FOR UPDATE` + unique idempotency key) + testcontainers integration tests, with CI.
 - [ ] **M3** — transactional outbox publishing `transfer.posted` events to Kafka.
-- [ ] **M4** — gRPC + REST API, Prometheus metrics, Docker Compose, CI.
+- [ ] **M4** — gRPC + REST API, Prometheus metrics, Docker Compose.
 
 ## License
 
