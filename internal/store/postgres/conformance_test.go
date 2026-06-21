@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -81,17 +82,28 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// applyMigration loads migrations/0001_init.sql from the repo root and executes
-// it. Passing the whole multi-statement script with no arguments uses pgx's
-// simple query protocol, which runs every statement in one round trip.
+// applyMigration loads every migrations/*.sql file from the repo root, in sorted
+// (numeric) order, and executes each. Passing a whole multi-statement script with
+// no arguments uses pgx's simple query protocol, which runs every statement in one
+// round trip. The outbox migration (0002) must be applied here too: ApplyTransfer
+// and Capture now write an outbox row in their transaction, so the table has to
+// exist for the conformance suite to run.
 func applyMigration(ctx context.Context, pool *pgxpool.Pool) error {
-	path := filepath.Join("..", "..", "..", "migrations", "0001_init.sql")
-	sql, err := os.ReadFile(path)
+	paths, err := filepath.Glob(filepath.Join("..", "..", "..", "migrations", "*.sql"))
 	if err != nil {
 		return err
 	}
-	_, err = pool.Exec(ctx, string(sql))
-	return err
+	sort.Strings(paths)
+	for _, path := range paths {
+		sql, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if _, err := pool.Exec(ctx, string(sql)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // --- helpers -----------------------------------------------------------------

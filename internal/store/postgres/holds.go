@@ -163,6 +163,11 @@ func (s *Store) Capture(ctx context.Context, req ledger.CaptureRequest, now time
 			string(ledger.HoldCaptured), int64(req.Amount), t.ID, h.ID); err != nil {
 			return err
 		}
+		// Emit the domain event in THIS transaction, so it commits atomically with
+		// the capture's balance moves (transactional outbox — no dual-write window).
+		if err := insertTransferPosted(ctx, tx, t); err != nil {
+			return err
+		}
 		result = t
 		return nil
 	})

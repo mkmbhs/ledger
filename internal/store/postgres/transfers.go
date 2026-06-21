@@ -59,6 +59,11 @@ func (s *Store) ApplyTransfer(ctx context.Context, req ledger.TransferRequest) (
 		if _, err := tx.Exec(ctx, `UPDATE accounts SET balance = balance + $1 WHERE id = $2`, int64(req.Amount), to.ID); err != nil {
 			return err
 		}
+		// Emit the domain event in THIS transaction, so it commits atomically with
+		// the balance moves (transactional outbox — no dual-write window).
+		if err := insertTransferPosted(ctx, tx, t); err != nil {
+			return err
+		}
 		result = t
 		return nil
 	})
