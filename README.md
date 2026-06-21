@@ -97,23 +97,47 @@ Run with the race detector (`make race`):
 
 ~90% statement coverage; `go vet` and `gofmt` clean.
 
+## Running the full stack
+
+```
+docker compose up --build
+```
+
+brings up the service plus Postgres, Kafka (redpanda), Prometheus, and Grafana.
+The app waits for its dependencies to be healthy, applies migrations, and serves
+REST on `:8080` and gRPC on `:9090`.
+
+```bash
+# REST
+curl -XPOST localhost:8080/v1/accounts  -d '{"id":"alice","currency":"USD","opening":1000}'
+curl -XPOST localhost:8080/v1/accounts  -d '{"id":"bob","currency":"USD","opening":0}'
+curl -XPOST localhost:8080/v1/transfers -d '{"idempotency_key":"k1","from_account_id":"alice","to_account_id":"bob","amount":250}'
+curl localhost:8080/v1/accounts/alice            # balance now 750
+curl localhost:8080/metrics                        # Prometheus metrics
+
+# gRPC (reflection is enabled)
+grpcurl -plaintext -d '{"id":"alice"}' localhost:9090 ledger.v1.LedgerService/GetAccount
+
+# the transfer.posted event lands on Kafka:
+docker compose exec redpanda rpk topic consume ledger.transfers --num 1
+```
+
+Prometheus is at `:9091`, Grafana (anonymous) at `:3000`.
+
 ## Layout
 
 ```
-internal/ledger/
-  ledger.go        domain types (accounts, entries, transfers, holds) + errors
-  store.go         the persistence/atomicity boundary
-  memstore.go      in-memory reference Store (concurrency-safe)
-  service.go       business rules, validation, the injectable clock
-  service_test.go  transfer + idempotency + concurrency proofs
-  holds_test.go    the hold lifecycle proofs
-  fuzz_test.go     property-based invariant fuzzing
-  example_test.go  a runnable godoc example
-internal/store/postgres/
-  store.go / transfers.go / holds.go   the PostgreSQL Store (pgx, FOR UPDATE)
-  conformance_test.go                  testcontainers suite (build tag: integration)
-migrations/0001_init.sql   the PostgreSQL schema (accounts, transfers, entries, holds)
-cmd/ledger/main.go         a tiny runnable demo
+internal/ledger/        domain + the in-memory reference Store, and all the proofs
+internal/store/postgres/  PostgreSQL Store (pgx, FOR UPDATE) + transactional outbox writes + conformance suite
+internal/outbox/        the Kafka relay (FOR UPDATE SKIP LOCKED, at-least-once)
+internal/transport/rest/    REST API over the Service
+internal/transport/grpcsvc/ gRPC API (proto-generated) over the Service
+internal/metrics/       Prometheus instrumentation (HTTP middleware + gRPC interceptor)
+proto/ledger/v1/        the gRPC contract
+migrations/             PostgreSQL schema (embedded; applied on startup)
+cmd/server/             the service: REST + gRPC + metrics + outbox relay, graceful shutdown
+cmd/ledger/             a tiny library demo
+Dockerfile · docker-compose.yml · deploy/   the runnable stack
 ```
 
 Integration tests are behind a build tag, so the default `go test ./...` needs no
@@ -123,9 +147,9 @@ database; run them with `go test -tags=integration ./...` (requires Docker).
 
 - [x] **M1** — double-entry core, idempotent transfers, concurrency- and fuzz-proven.
 - [x] **Holds** — authorize / capture / void / expire, with available-balance semantics.
-- [x] **M2** — PostgreSQL `Store` (`FOR UPDATE` + unique idempotency key) + testcontainers integration tests, with CI.
-- [ ] **M3** — transactional outbox publishing `transfer.posted` events to Kafka.
-- [ ] **M4** — gRPC + REST API, Prometheus metrics, Docker Compose.
+- [x] **M2** — PostgreSQL `Store` (`FOR UPDATE` + unique idempotency key) + testcontainers integration tests.
+- [x] **M3** — transactional outbox publishing `transfer.posted` events to Kafka (at-least-once relay).
+- [x] **M4** — REST + gRPC APIs, Prometheus metrics, Docker Compose (distroless image).
 
 ## License
 
