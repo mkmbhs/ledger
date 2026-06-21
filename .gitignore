@@ -1,6 +1,7 @@
-# Built binary (root-anchored so it never matches the internal/ledger or
+# Built binaries (root-anchored so they never match the internal/ledger or
 # cmd/ledger SOURCE directories — an unanchored "ledger" would).
 /ledger
+/server
 /bin/
 *.exe
 
