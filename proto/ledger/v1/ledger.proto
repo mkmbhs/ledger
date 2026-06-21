@@ -1,0 +1,164 @@
+syntax = "proto3";
+
+// Package ledger.v1 is the gRPC surface of the double-entry money ledger. It
+// mirrors the domain in internal/ledger: balanced transfers, authorization
+// holds (reserve-then-capture), and account balances split into settled,
+// held, and available funds. Every mutating RPC carries an idempotency key so
+// it is safe to retry.
+package ledger.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/mkmbhs/ledger/internal/transport/grpcsvc/ledgerv1;ledgerv1";
+
+// LedgerService exposes the ledger's money-movement primitives over gRPC.
+service LedgerService {
+  // Transfer atomically moves money from one account to another. Safe to retry
+  // with the same idempotency_key: the transfer is applied at most once.
+  rpc Transfer(TransferRequest) returns (TransferResponse);
+
+  // Authorize reserves funds in the source account (an authorization hold),
+  // reducing its available balance without moving money.
+  rpc Authorize(AuthorizeRequest) returns (AuthorizeResponse);
+
+  // Capture settles all or part of a hold, moving the captured amount and
+  // releasing any remainder. Safe to retry with the same idempotency_key.
+  rpc Capture(CaptureRequest) returns (CaptureResponse);
+
+  // Void releases a hold without moving money. Idempotent.
+  rpc Void(VoidRequest) returns (VoidResponse);
+
+  // GetAccount returns an account with its settled, held, and available figures.
+  rpc GetAccount(GetAccountRequest) returns (GetAccountResponse);
+
+  // GetAccountEntries returns every entry posted against an account, oldest
+  // first. An account's balance is always the sum of its entries.
+  rpc GetAccountEntries(GetAccountEntriesRequest) returns (GetAccountEntriesResponse);
+}
+
+// TransferStatus is the lifecycle state of a transfer.
+enum TransferStatus {
+  TRANSFER_STATUS_UNSPECIFIED = 0;
+  TRANSFER_STATUS_POSTED = 1; // applied atomically
+}
+
+// HoldStatus is the lifecycle state of an authorization hold.
+enum HoldStatus {
+  HOLD_STATUS_UNSPECIFIED = 0;
+  HOLD_STATUS_ACTIVE = 1;    // funds reserved, not yet moved
+  HOLD_STATUS_CAPTURED = 2;  // settled: funds moved (fully or partially)
+  HOLD_STATUS_VOIDED = 3;    // released without moving funds
+  HOLD_STATUS_EXPIRED = 4;   // released automatically after expires_at
+}
+
+// Account is a holder of a balance in a single currency. amount fields are in
+// the currency's minor units (for example, cents).
+message Account {
+  string id = 1;
+  string currency = 2;
+  int64 balance = 3;   // settled funds the account owns
+  int64 held = 4;      // portion reserved by active holds
+  int64 available = 5; // spendable: balance - held
+}
+
+// Entry is one side of a transfer posted against a single account. amount is
+// signed: negative for a debit, positive for a credit. The two entries of a
+// transfer always sum to zero.
+message Entry {
+  string id = 1;
+  string transfer_id = 2;
+  string account_id = 3;
+  int64 amount = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+// Transfer is an atomic, balanced movement of money between two accounts.
+message Transfer {
+  string id = 1;
+  string idempotency_key = 2;
+  string from_account_id = 3;
+  string to_account_id = 4;
+  int64 amount = 5;
+  string currency = 6;
+  TransferStatus status = 7;
+  google.protobuf.Timestamp created_at = 8;
+  repeated Entry entries = 9;
+}
+
+// Hold is an authorization that reserves funds in the source account before
+// deciding whether to capture (move) or release them.
+message Hold {
+  string id = 1;
+  string idempotency_key = 2;
+  string from_account_id = 3;
+  string to_account_id = 4;
+  int64 amount = 5;             // reserved amount
+  int64 captured = 6;           // amount actually captured (<= amount)
+  HoldStatus status = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp expires_at = 9; // unset means no expiry
+  string capture_transfer_id = 10;          // set once captured
+}
+
+// TransferRequest applies a transfer. idempotency_key makes the operation safe
+// to retry.
+message TransferRequest {
+  string idempotency_key = 1;
+  string from_account_id = 2;
+  string to_account_id = 3;
+  int64 amount = 4;
+}
+
+message TransferResponse {
+  Transfer transfer = 1;
+}
+
+// AuthorizeRequest reserves funds. expires_in_seconds, if > 0, sets a deadline
+// after which the hold is released automatically.
+message AuthorizeRequest {
+  string idempotency_key = 1;
+  string from_account_id = 2;
+  string to_account_id = 3;
+  int64 amount = 4;
+  int64 expires_in_seconds = 5;
+}
+
+message AuthorizeResponse {
+  Hold hold = 1;
+}
+
+// CaptureRequest settles all or part of a hold. amount must be > 0 and <= the
+// hold's reserved amount; any uncaptured remainder is released.
+message CaptureRequest {
+  string idempotency_key = 1;
+  string hold_id = 2;
+  int64 amount = 3;
+}
+
+message CaptureResponse {
+  Transfer transfer = 1;
+}
+
+message VoidRequest {
+  string hold_id = 1;
+}
+
+message VoidResponse {
+  Hold hold = 1;
+}
+
+message GetAccountRequest {
+  string id = 1;
+}
+
+message GetAccountResponse {
+  Account account = 1;
+}
+
+message GetAccountEntriesRequest {
+  string account_id = 1;
+}
+
+message GetAccountEntriesResponse {
+  repeated Entry entries = 1;
+}

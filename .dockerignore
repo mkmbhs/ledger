@@ -1,0 +1,12 @@
+.git
+.github
+.*
+README.md
+LICENSE
+Makefile
+Dockerfile
+.dockerignore
+docker-compose.yml
+deploy
+*.html
+*.md
