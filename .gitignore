@@ -1,0 +1,21 @@
+# Built binary (root-anchored so it never matches the internal/ledger or
+# cmd/ledger SOURCE directories — an unanchored "ledger" would).
+/ledger
+/bin/
+*.exe
+
+# Test / coverage
+*.out
+coverage.*
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Local-only tooling — NOT part of the public portfolio repo.
+# CLAUDE.md is AI/editor guidance; .claude/ holds knowledge notes and is the
+# symlink target for a private knowledge vault. Both stay on disk locally
+# (so local tooling keeps working) but are never pushed.
+/CLAUDE.md
+/.claude/
