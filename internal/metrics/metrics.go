@@ -61,7 +61,7 @@ var (
 	outboxPublished = factory.NewCounter(
 		prometheus.CounterOpts{
 			Name: "ledger_outbox_published_total",
-			Help: "Total outbox events published to the broker.",
+			Help: "Total outbox event deliveries to the broker (at-least-once: a redelivered event counts again).",
 		},
 	)
 	outboxUnpublished = factory.NewGauge(

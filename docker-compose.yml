@@ -73,7 +73,9 @@ services:
     image: grafana/grafana:latest
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
-      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      # Viewer is all anonymous needs (the dashboard is provisioned read-only),
+      # and it is the only role recent Grafana still supports for anonymous.
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
     volumes:
       - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
     ports: ["3000:3000"]

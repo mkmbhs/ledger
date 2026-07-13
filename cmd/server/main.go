@@ -233,7 +233,9 @@ func startRelay(ctx context.Context, relay *outbox.Relay, pool *pgxpool.Pool, ev
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				n, err := relay.Drain(context.Background(), 100)
+				// Batches of 1000 let a backlog (say, after a broker outage or a
+				// load test) recover at ~1000 events/s rather than trickling out.
+				n, err := relay.Drain(context.Background(), 1000)
 				metrics.AddOutboxPublished(n) // counts rows delivered even when the batch later failed
 				if err != nil {
 					log.Printf("relay: %v", err)

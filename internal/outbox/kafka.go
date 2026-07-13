@@ -32,6 +32,12 @@ func NewKafkaPublisher(brokers []string, topic string) *KafkaPublisher {
 			Balancer:               &kafka.Hash{}, // partition by key (aggregate id)
 			RequiredAcks:           kafka.RequireAll,
 			AllowAutoTopicCreation: true,
+			// The relay publishes synchronously, one event at a time, so each
+			// WriteMessages call must flush immediately. The writer's defaults
+			// (BatchSize 100, BatchTimeout 1s) are tuned for fire-and-forget
+			// batching and would park every single-message write on the batch
+			// timeout — capping the relay at about one event per second.
+			BatchSize: 1,
 		},
 	}
 }

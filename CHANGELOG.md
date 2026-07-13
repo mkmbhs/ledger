@@ -58,10 +58,10 @@ First tagged release. Import paths are stable as of this tag: the core is
 - Double-entry core: accounts, balanced transfers, integer minor-unit money,
   and the full authorization-hold lifecycle (authorize → capture / void /
   expire), with idempotency keys on every money-moving operation.
-- `MemStore`, the in-memory reference implementation that serves as the
-  executable specification, and a PostgreSQL store (pgx, `SELECT ... FOR
-  UPDATE` in sorted order, unique idempotency keys) that provides the same
-  guarantees durably.
+- `MemStore`, the in-memory reference implementation that is the executable
+  specification, and a PostgreSQL store (pgx, `SELECT ... FOR UPDATE` in
+  sorted order, unique idempotency keys) that provides the same guarantees
+  durably.
 - `ledgertest`: a store-agnostic conformance suite (v1, 20 scenarios) any
   `ledger.Store` implementation can run. Both bundled stores pass it; the
   MemStore run is untagged and needs no external services.

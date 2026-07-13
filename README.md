@@ -135,7 +135,7 @@ Run with the race detector (`make race`):
   claim "passes conformance v1" is one any store implementation can earn — or
   fail.
 
-~90% statement coverage; `go vet` and `gofmt` clean.
+~90% statement coverage on the core package; `go vet` and `gofmt` clean.
 
 ## Architecture
 
@@ -304,13 +304,18 @@ sitting, inside the PostgreSQL you already run** — with the correctness claims
 expressed as tests you can execute (and a [conformance suite](ledgertest/) you
 can point at your own store) rather than as documentation you have to trust.
 
-## Roadmap
+## Milestones
 
 - [x] **M1** — double-entry core, idempotent transfers, concurrency- and fuzz-proven.
 - [x] **Holds** — authorize / capture / void / expire, with available-balance semantics.
 - [x] **M2** — PostgreSQL `Store` (`FOR UPDATE` + unique idempotency key) + testcontainers integration tests.
 - [x] **M3** — transactional outbox publishing `transfer.posted` events to Kafka (at-least-once relay).
 - [x] **M4** — REST + gRPC APIs, Prometheus metrics, Docker Compose (distroless image).
+- [x] **v0.1.0** — invariant enforcement on every write path with a database
+  backstop, idempotent account creation, importable core, and the
+  [`ledgertest`](ledgertest/) conformance suite.
+- [x] **v0.2.0** — multi-leg (n:n) postings, idempotency-key retention with the
+  retry contract stated, outbox observability, and the provisioned dashboard.
 
 ## License
 
