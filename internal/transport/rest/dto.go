@@ -3,7 +3,7 @@ package rest
 import (
 	"time"
 
-	"github.com/mkmbhs/ledger/internal/ledger"
+	"github.com/mkmbhs/ledger"
 )
 
 // The DTO types below define the public JSON shape of the API. They are kept

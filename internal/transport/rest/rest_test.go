@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/mkmbhs/ledger/internal/ledger"
+	"github.com/mkmbhs/ledger"
 )
 
 // newServer returns a live test server wrapping a fresh in-memory ledger.

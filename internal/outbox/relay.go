@@ -2,7 +2,7 @@
 // message broker.
 //
 // The Postgres Store writes a domain event into the outbox in the same
-// transaction that moves the money (see internal/store/postgres), so the event is
+// transaction that moves the money (see the postgres package), so the event is
 // durable the instant the transfer commits. This package is the other half: a
 // Relay polls the unpublished tail and hands each event to a Publisher (Kafka in
 // production, a fake in tests).

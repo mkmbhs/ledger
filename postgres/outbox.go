@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/mkmbhs/ledger/internal/ledger"
+	"github.com/mkmbhs/ledger"
 )
 
 // eventTransferPosted is emitted whenever a transfer is posted — both by a direct

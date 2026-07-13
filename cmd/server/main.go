@@ -24,13 +24,13 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 
-	"github.com/mkmbhs/ledger/internal/ledger"
+	"github.com/mkmbhs/ledger"
 	"github.com/mkmbhs/ledger/internal/metrics"
 	"github.com/mkmbhs/ledger/internal/outbox"
-	"github.com/mkmbhs/ledger/internal/store/postgres"
 	"github.com/mkmbhs/ledger/internal/transport/grpcsvc"
 	"github.com/mkmbhs/ledger/internal/transport/rest"
 	"github.com/mkmbhs/ledger/migrations"
+	"github.com/mkmbhs/ledger/postgres"
 )
 
 type config struct {

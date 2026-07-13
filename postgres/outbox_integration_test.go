@@ -7,7 +7,7 @@
 //
 // It reuses the postgres container, pool, and store stood up by TestMain in
 // conformance_test.go, and adds a throwaway redpanda container for the broker.
-// Run with: go test -tags=integration ./internal/store/postgres
+// Run with: go test -tags=integration ./postgres
 package postgres_test
 
 import (
@@ -22,7 +22,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/redpanda"
 
-	"github.com/mkmbhs/ledger/internal/ledger"
+	"github.com/mkmbhs/ledger"
 	"github.com/mkmbhs/ledger/internal/outbox"
 )
 

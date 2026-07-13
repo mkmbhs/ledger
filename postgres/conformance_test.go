@@ -4,7 +4,7 @@
 // gated behind the `integration` build tag, so the default `go test ./...` never
 // touches a database. Run with:
 //
-//	go test -tags=integration ./internal/store/postgres
+//	go test -tags=integration ./postgres
 //
 // A throwaway postgres:16 container is started once via testcontainers-go, the
 // migration is applied, and every test runs against a freshly truncated schema.
@@ -29,8 +29,8 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 
-	"github.com/mkmbhs/ledger/internal/ledger"
-	pgstore "github.com/mkmbhs/ledger/internal/store/postgres"
+	"github.com/mkmbhs/ledger"
+	pgstore "github.com/mkmbhs/ledger/postgres"
 )
 
 var (
@@ -90,7 +90,7 @@ func TestMain(m *testing.M) {
 // and Capture now write an outbox row in their transaction, so the table has to
 // exist for the conformance suite to run.
 func applyMigration(ctx context.Context, pool *pgxpool.Pool) error {
-	paths, err := filepath.Glob(filepath.Join("..", "..", "..", "migrations", "*.sql"))
+	paths, err := filepath.Glob(filepath.Join("..", "migrations", "*.sql"))
 	if err != nil {
 		return err
 	}

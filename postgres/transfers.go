@@ -7,7 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/mkmbhs/ledger/internal/ledger"
+	"github.com/mkmbhs/ledger"
 )
 
 const transferCols = `id, idempotency_key, from_account_id, to_account_id, amount, currency, status, created_at`

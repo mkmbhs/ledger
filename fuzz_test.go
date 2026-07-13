@@ -20,7 +20,7 @@ import (
 // not care what the "right" answer is for a given input, only that these
 // properties are preserved for every input.
 //
-// Run: go test -run x -fuzz FuzzTransfers ./internal/ledger
+// Run: go test -run x -fuzz FuzzTransfers .
 func FuzzTransfers(f *testing.F) {
 	f.Add([]byte{0, 1, 50, 1, 2, 30, 2, 0, 200})
 	f.Add([]byte{})

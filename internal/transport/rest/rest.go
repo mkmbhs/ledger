@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/mkmbhs/ledger/internal/ledger"
+	"github.com/mkmbhs/ledger"
 )
 
 // NewHandler returns an http.Handler routing the ledger HTTP API to svc.

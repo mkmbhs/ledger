@@ -71,7 +71,7 @@ the `Service`; atomic, idempotent application lives behind the `Store` interface
 - `MemStore` — an in-memory reference implementation. A single mutex makes every
   operation serializable, so it is the simplest possible *specification* of
   correctness, and the concurrency tests run against it.
-- PostgreSQL (`internal/store/postgres`, schema in
+- PostgreSQL (the `postgres` package, schema in
   [`migrations/0001_init.sql`](migrations/0001_init.sql)) — a `UNIQUE` constraint
   on the idempotency key plus `SELECT ... FOR UPDATE` (in a deadlock-safe, sorted
   lock order) inside one transaction give the same guarantees at scale, and a
@@ -178,8 +178,8 @@ Prometheus is at `:9091`, Grafana (anonymous) at `:3000`.
 ## Layout
 
 ```
-internal/ledger/        domain + the in-memory reference Store, and all the proofs
-internal/store/postgres/  PostgreSQL Store (pgx, FOR UPDATE) + transactional outbox writes + conformance suite
+./                      package ledger: domain + the in-memory reference Store, and all the proofs
+postgres/               PostgreSQL Store (pgx, FOR UPDATE) + transactional outbox writes + conformance suite
 internal/outbox/        the Kafka relay (FOR UPDATE SKIP LOCKED, at-least-once)
 internal/transport/rest/    REST API over the Service
 internal/transport/grpcsvc/ gRPC API (proto-generated) over the Service

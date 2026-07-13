@@ -1,5 +1,5 @@
-# Built binaries (root-anchored so they never match the internal/ledger or
-# cmd/ledger SOURCE directories — an unanchored "ledger" would).
+# Built binaries (root-anchored so they never match the cmd/ledger SOURCE
+# directory — an unanchored "ledger" would).
 /ledger
 /server
 /bin/

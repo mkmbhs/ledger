@@ -11,7 +11,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
-	"github.com/mkmbhs/ledger/internal/ledger"
+	"github.com/mkmbhs/ledger"
 	"github.com/mkmbhs/ledger/internal/transport/grpcsvc"
 	"github.com/mkmbhs/ledger/internal/transport/grpcsvc/ledgerv1"
 )

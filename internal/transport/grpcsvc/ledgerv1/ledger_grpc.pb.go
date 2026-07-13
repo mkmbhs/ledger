@@ -5,7 +5,7 @@
 // source: ledger/v1/ledger.proto
 
 // Package ledger.v1 is the gRPC surface of the double-entry money ledger. It
-// mirrors the domain in internal/ledger: balanced transfers, authorization
+// mirrors the ledger domain: balanced transfers, authorization
 // holds (reserve-then-capture), and account balances split into settled,
 // held, and available funds. Every mutating RPC carries an idempotency key so
 // it is safe to retry.

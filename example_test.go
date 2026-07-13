@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mkmbhs/ledger/internal/ledger"
+	"github.com/mkmbhs/ledger"
 )
 
 // ExampleService_Transfer shows the core guarantee: a transfer applied twice with

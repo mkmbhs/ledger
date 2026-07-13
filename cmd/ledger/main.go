@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/mkmbhs/ledger/internal/ledger"
+	"github.com/mkmbhs/ledger"
 )
 
 func main() {

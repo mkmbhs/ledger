@@ -1,7 +1,7 @@
 // Package grpcsvc adapts the ledger domain service to gRPC. It is a thin
 // transport layer: it translates protobuf requests into domain calls, maps
 // domain sentinel errors onto gRPC status codes, and translates domain results
-// back into protobuf. All business rules live in internal/ledger.
+// back into protobuf. All business rules live in the root ledger package.
 package grpcsvc
 
 import (
@@ -14,7 +14,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/mkmbhs/ledger/internal/ledger"
+	"github.com/mkmbhs/ledger"
 	"github.com/mkmbhs/ledger/internal/transport/grpcsvc/ledgerv1"
 )
 

@@ -7,7 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/mkmbhs/ledger/internal/ledger"
+	"github.com/mkmbhs/ledger"
 )
 
 const holdCols = `id, idempotency_key, from_account_id, to_account_id, amount, captured, status, created_at, expires_at, capture_transfer_id`
