@@ -77,9 +77,16 @@ the `Service`; atomic, idempotent application lives behind the `Store` interface
   lock order) inside one transaction give the same guarantees at scale, and a
   deferred constraint trigger
   ([`migrations/0003_entries_must_balance.sql`](migrations/0003_entries_must_balance.sql))
-  makes the database itself refuse a commit whose entries don't balance. A
-  testcontainers conformance suite runs the same scenarios as the in-memory
-  reference against a real Postgres.
+  makes the database itself refuse a commit whose entries don't balance.
+
+Both stores pass **the same conformance suite**, exported as the
+[`ledgertest`](ledgertest/) package (20 scenarios: idempotent replay under
+concurrency, conservation, the hold lifecycle, invariant checks after every
+scenario). The MemStore run needs nothing but `go test ./...`; the PostgreSQL
+run is the same suite against a real database via testcontainers
+(`go test -tags=integration ./...`). Any other `ledger.Store` implementation
+can import `ledgertest` and make the same claim — see
+[`ledgertest/README.md`](ledgertest/README.md).
 
 ## What the tests prove
 
@@ -106,6 +113,11 @@ Run with the race detector (`make race`):
 - **Account creation is idempotent** — re-creating an account identically is a
   no-op; a mismatched re-create is refused, so an existing balance is never
   silently reset.
+- **Both stores pass one spec** — the [`ledgertest`](ledgertest/) conformance
+  suite runs untagged against the in-memory reference and, behind the
+  `integration` tag, against real PostgreSQL. The suite is importable, so the
+  claim "passes conformance v1" is one any store implementation can earn — or
+  fail.
 
 ~90% statement coverage; `go vet` and `gofmt` clean.
 
@@ -179,7 +191,8 @@ Prometheus is at `:9091`, Grafana (anonymous) at `:3000`.
 
 ```
 ./                      package ledger: domain + the in-memory reference Store, and all the proofs
-postgres/               PostgreSQL Store (pgx, FOR UPDATE) + transactional outbox writes + conformance suite
+ledgertest/             the store-agnostic conformance suite — import it to test your own Store
+postgres/               PostgreSQL Store (pgx, FOR UPDATE) + transactional outbox writes + integration tests
 internal/outbox/        the Kafka relay (FOR UPDATE SKIP LOCKED, at-least-once)
 internal/transport/rest/    REST API over the Service
 internal/transport/grpcsvc/ gRPC API (proto-generated) over the Service
@@ -195,6 +208,47 @@ Dockerfile · docker-compose.yml · deploy/   the runnable stack
 
 Integration tests are behind a build tag, so the default `go test ./...` needs no
 database; run them with `go test -tags=integration ./...` (requires Docker).
+
+## Limitations
+
+Scope decisions, stated as such:
+
+- **One currency per transfer.** Both accounts must carry the same currency;
+  there is no FX inside the ledger. Converting money is a business workflow
+  (two transfers and a rate), not a storage primitive.
+- **Transfers are two-legged.** Every transfer is one debit and one matching
+  credit. Fee splits and multi-party settlements are modeled as multiple
+  transfers.
+- **No authentication or multi-tenancy.** The REST and gRPC APIs are reference
+  transports for the domain service; put them behind your own gateway.
+- **The Kafka consumer is reference-grade.** It shows at-least-once consumption
+  with dedupe on the event id; it is not a consumer framework.
+
+## Prior art & positioning
+
+Why not just use an existing system? Depending on what you need, do:
+
+- [TigerBeetle](https://github.com/tigerbeetle/tigerbeetle) enforces these same
+  invariants — double-entry, idempotent transfers, two-phase holds — inside a
+  purpose-built distributed database, and adds a level of testing rigor
+  (deterministic simulation across a replicated cluster) no application-layer
+  ledger matches. It is the right call when you need extreme throughput and are
+  ready to operate a replicated Zig cluster with its own client protocol. It is
+  not something you read to learn how a ledger works.
+- [Formance](https://github.com/formancehq/ledger),
+  [Blnk](https://github.com/blnkfinance/blnk), and
+  [Midaz](https://github.com/LerianStudio/midaz) ship these invariants as
+  products: platforms with consoles, SDKs, and multi-leg posting DSLs.
+- [pgledger](https://github.com/pgr0ss/pgledger) is the closest relative — a
+  readable, pure-PostgreSQL ledger that makes the opposite bet: all logic lives
+  in PL/pgSQL functions with a single implementation (and no idempotency keys
+  or holds). Worth reading side by side with this repo for the
+  where-should-invariants-live argument.
+
+This repo exists for the remaining job: **the patterns, readable in one
+sitting, inside the PostgreSQL you already run** — with the correctness claims
+expressed as tests you can execute (and a [conformance suite](ledgertest/) you
+can point at your own store) rather than as documentation you have to trust.
 
 ## Roadmap
 
