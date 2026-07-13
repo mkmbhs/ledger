@@ -183,6 +183,7 @@ func scanEntry(row pgx.Row) (ledger.Entry, error) {
 		return ledger.Entry{}, err
 	}
 	e.Amount = ledger.Money(amount)
+	e.CreatedAt = e.CreatedAt.UTC() // render identically on write and read-back
 	return e, nil
 }
 

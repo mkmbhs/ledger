@@ -340,8 +340,9 @@ func scanHold(row pgx.Row) (ledger.Hold, error) {
 	h.Amount = ledger.Money(amount)
 	h.Captured = ledger.Money(captured)
 	h.Status = ledger.HoldStatus(status)
+	h.CreatedAt = h.CreatedAt.UTC() // render identically on write and read-back
 	if expiresAt != nil {
-		h.ExpiresAt = *expiresAt
+		h.ExpiresAt = expiresAt.UTC()
 	}
 	if captureTransferID != nil {
 		h.CaptureTransferID = *captureTransferID

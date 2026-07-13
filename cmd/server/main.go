@@ -122,6 +122,19 @@ func run() error {
 	// arriving after its key was pruned becomes a new operation.
 	var pruneDone <-chan struct{}
 	if cfg.pruneInterval > 0 {
+		// Fail at boot, not on every tick: retentions must be sane and the
+		// schema must actually have ledger_prune (a database provisioned before
+		// migration 0005 and never re-migrated would not).
+		if cfg.keyRetention <= 0 || cfg.outboxRetention <= 0 {
+			return errors.New("KEY_RETENTION and OUTBOX_RETENTION must be positive when PRUNE_INTERVAL is set")
+		}
+		var fn *string
+		if err := pool.QueryRow(ctx, `SELECT to_regprocedure('ledger_prune(interval, interval)')::text`).Scan(&fn); err != nil {
+			return err
+		}
+		if fn == nil {
+			return errors.New("retention enabled but ledger_prune is missing: the schema predates migration 0005 — apply migrations/0005_retention.sql")
+		}
 		log.Printf("retention: pruning every %s (keys %s, published outbox %s)",
 			cfg.pruneInterval, cfg.keyRetention, cfg.outboxRetention)
 		pruneDone = startPruner(ctx, store, cfg)

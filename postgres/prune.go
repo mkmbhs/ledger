@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -21,6 +22,11 @@ type PruneStats struct {
 // NEW operation — a duplicate. Keep keyRetention longer than the longest
 // possible client retry horizon, and never retry a request older than it.
 func (s *Store) Prune(ctx context.Context, keyRetention, outboxRetention time.Duration) (PruneStats, error) {
+	// Refused here and again inside ledger_prune: a non-positive retention
+	// would strip idempotency protection from everything, instantly.
+	if keyRetention <= 0 || outboxRetention <= 0 {
+		return PruneStats{}, fmt.Errorf("postgres: prune retentions must be positive (key=%s, outbox=%s)", keyRetention, outboxRetention)
+	}
 	var st PruneStats
 	err := s.pool.QueryRow(ctx,
 		`SELECT * FROM ledger_prune(make_interval(secs => $1), make_interval(secs => $2))`,

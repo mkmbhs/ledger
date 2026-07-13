@@ -136,3 +136,20 @@ func TestPG_Prune_Retention(t *testing.T) {
 		t.Errorf("second prune = %+v err=%v, want all zeros", st2, err)
 	}
 }
+
+// TestPG_Prune_RefusesNonPositiveRetention pins the guard at both layers: a
+// zero or negative retention is a typo that would strip idempotency protection
+// from everything, and it is refused before touching a row.
+func TestPG_Prune_RefusesNonPositiveRetention(t *testing.T) {
+	ctx := context.Background()
+	if _, err := testStore.Prune(ctx, 0, time.Hour); err == nil {
+		t.Error("Prune with zero key retention succeeded, want error")
+	}
+	if _, err := testStore.Prune(ctx, time.Hour, -time.Minute); err == nil {
+		t.Error("Prune with negative outbox retention succeeded, want error")
+	}
+	// The SQL function refuses too, independently of the Go wrapper.
+	if _, err := testPool.Exec(ctx, `SELECT * FROM ledger_prune('0 seconds', '1 day')`); err == nil {
+		t.Error("ledger_prune with zero retention succeeded, want error")
+	}
+}

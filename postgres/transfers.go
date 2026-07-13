@@ -221,5 +221,9 @@ func scanTransfer(row pgx.Row) (ledger.Transfer, error) {
 		t.Amount = ledger.Money(*amount)
 	}
 	t.Status = ledger.TransferStatus(status)
+	// Normalize to UTC: pgx returns timestamptz in the session zone, and a
+	// replay read from the database should render identically to the original
+	// in-memory response.
+	t.CreatedAt = t.CreatedAt.UTC()
 	return t, nil
 }

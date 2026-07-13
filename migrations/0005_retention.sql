@@ -30,7 +30,7 @@ ALTER TABLE holds     ALTER COLUMN idempotency_key DROP NOT NULL;
 -- cover exactly the rows a prune can still touch (same pattern as
 -- outbox_unpublished_idx).
 CREATE INDEX transfers_prunable_idx ON transfers (created_at) WHERE idempotency_key IS NOT NULL;
-CREATE INDEX holds_prunable_idx     ON holds (created_at)     WHERE idempotency_key IS NOT NULL;
+CREATE INDEX holds_prunable_idx     ON holds (created_at)     WHERE idempotency_key IS NOT NULL AND status <> 'active';
 CREATE INDEX outbox_published_idx   ON outbox (published_at)  WHERE published_at IS NOT NULL;
 
 -- ledger_prune applies the retention policy and reports what it did. Run it
@@ -46,6 +46,12 @@ DECLARE
     h BIGINT;
     o BIGINT;
 BEGIN
+    -- A zero or negative retention would strip idempotency protection from
+    -- everything, instantly. That is never a policy, always a typo: refuse it.
+    IF key_retention <= interval '0' OR outbox_retention <= interval '0' THEN
+        RAISE EXCEPTION 'ledger_prune: retentions must be positive (got %, %)', key_retention, outbox_retention;
+    END IF;
+
     UPDATE transfers SET idempotency_key = NULL
     WHERE idempotency_key IS NOT NULL AND created_at < now() - key_retention;
     GET DIAGNOSTICS t = ROW_COUNT;
