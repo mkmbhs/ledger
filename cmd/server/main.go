@@ -40,6 +40,12 @@ type config struct {
 	httpAddr     string
 	grpcAddr     string
 	relayEvery   time.Duration
+
+	// Retention (migrations/0005). pruneInterval gates the ticker: zero (the
+	// default, and the demo stack's setting) disables pruning entirely.
+	pruneInterval   time.Duration
+	keyRetention    time.Duration
+	outboxRetention time.Duration
 }
 
 func loadConfig() config {
@@ -50,6 +56,10 @@ func loadConfig() config {
 		httpAddr:     env("HTTP_ADDR", ":8080"),
 		grpcAddr:     env("GRPC_ADDR", ":9090"),
 		relayEvery:   time.Second,
+
+		pruneInterval:   envDuration("PRUNE_INTERVAL", 0),
+		keyRetention:    envDuration("KEY_RETENTION", 30*24*time.Hour),
+		outboxRetention: envDuration("OUTBOX_RETENTION", 7*24*time.Hour),
 	}
 }
 
@@ -58,6 +68,20 @@ func env(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// envDuration reads a Go duration (e.g. "1h", "720h") from the environment. A
+// malformed value is a configuration bug worth failing loudly over.
+func envDuration(key string, def time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		log.Fatalf("invalid %s %q: %v", key, v, err)
+	}
+	return d
 }
 
 func main() {
@@ -91,6 +115,21 @@ func run() error {
 	pub := outbox.NewKafkaPublisher(cfg.kafkaBrokers, cfg.kafkaTopic)
 	defer pub.Close()
 	relayDone := startRelay(ctx, outbox.NewRelay(pool, pub), cfg.relayEvery)
+
+	// Retention: an opt-in ticker applying ledger_prune (migrations/0005).
+	// Disabled unless PRUNE_INTERVAL is set, so the demo stack keeps full
+	// history. Retention must exceed the longest client retry horizon: a retry
+	// arriving after its key was pruned becomes a new operation.
+	var pruneDone <-chan struct{}
+	if cfg.pruneInterval > 0 {
+		log.Printf("retention: pruning every %s (keys %s, published outbox %s)",
+			cfg.pruneInterval, cfg.keyRetention, cfg.outboxRetention)
+		pruneDone = startPruner(ctx, store, cfg)
+	} else {
+		closed := make(chan struct{})
+		close(closed)
+		pruneDone = closed
+	}
 
 	// HTTP: /metrics plus the REST API wrapped in the metrics middleware.
 	mux := http.NewServeMux()
@@ -135,8 +174,36 @@ func run() error {
 	_ = httpSrv.Shutdown(shCtx)
 	grpcSrv.GracefulStop()
 	<-relayDone // the relay loop stops when ctx is cancelled
+	<-pruneDone
 	log.Println("stopped cleanly")
 	return nil
+}
+
+// startPruner applies the retention policy on a ticker until ctx is cancelled,
+// returning a channel closed once the loop has exited. Pruning is maintenance,
+// not correctness: an error is logged and retried on the next tick.
+func startPruner(ctx context.Context, store *postgres.Store, cfg config) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		t := time.NewTicker(cfg.pruneInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				st, err := store.Prune(context.Background(), cfg.keyRetention, cfg.outboxRetention)
+				if err != nil {
+					log.Printf("prune: %v", err)
+				} else if st.TransferKeysNulled+st.HoldKeysNulled+st.OutboxRowsDeleted > 0 {
+					log.Printf("prune: nulled %d transfer + %d hold key(s), deleted %d outbox row(s)",
+						st.TransferKeysNulled, st.HoldKeysNulled, st.OutboxRowsDeleted)
+				}
+			}
+		}
+	}()
+	return done
 }
 
 // startRelay drains the outbox to Kafka on a ticker until ctx is cancelled. It

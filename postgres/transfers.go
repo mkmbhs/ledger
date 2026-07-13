@@ -201,12 +201,15 @@ func loadEntries(ctx context.Context, q querier, transferID string) ([]ledger.En
 
 func scanTransfer(row pgx.Row) (ledger.Transfer, error) {
 	var t ledger.Transfer
-	var fromID, toID *string
+	var key, fromID, toID *string
 	var amount *int64
 	var status string
-	if err := row.Scan(&t.ID, &t.IdempotencyKey, &fromID, &toID,
+	if err := row.Scan(&t.ID, &key, &fromID, &toID,
 		&amount, &t.Currency, &status, &t.CreatedAt); err != nil {
 		return ledger.Transfer{}, err
+	}
+	if key != nil {
+		t.IdempotencyKey = *key // NULL after retention pruned it (0005)
 	}
 	if fromID != nil {
 		t.FromAccountID = *fromID

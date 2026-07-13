@@ -325,13 +325,17 @@ func insertHold(ctx context.Context, q querier, h ledger.Hold) error {
 
 func scanHold(row pgx.Row) (ledger.Hold, error) {
 	var h ledger.Hold
+	var key *string
 	var amount, captured int64
 	var status string
 	var expiresAt *time.Time
 	var captureTransferID *string
-	if err := row.Scan(&h.ID, &h.IdempotencyKey, &h.FromAccountID, &h.ToAccountID,
+	if err := row.Scan(&h.ID, &key, &h.FromAccountID, &h.ToAccountID,
 		&amount, &captured, &status, &h.CreatedAt, &expiresAt, &captureTransferID); err != nil {
 		return ledger.Hold{}, err
+	}
+	if key != nil {
+		h.IdempotencyKey = *key // NULL after retention pruned it (0005)
 	}
 	h.Amount = ledger.Money(amount)
 	h.Captured = ledger.Money(captured)

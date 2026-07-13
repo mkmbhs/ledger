@@ -220,6 +220,33 @@ Dockerfile · docker-compose.yml · deploy/   the runnable stack
 Integration tests are behind a build tag, so the default `go test ./...` needs no
 database; run them with `go test -tags=integration ./...` (requires Docker).
 
+## Retention: after a year in production
+
+Idempotency keys and published outbox rows would otherwise accumulate forever.
+`SELECT * FROM ledger_prune('30 days', '7 days')`
+([`migrations/0005_retention.sql`](migrations/0005_retention.sql)) applies the
+retention policy:
+
+- **Idempotency keys** older than the window are **set to NULL** — the rows
+  stay. Ledger rows (transfers, entries, holds) are never deleted; history and
+  reconciliation are untouched. Keys of **active holds are never pruned**: a
+  live obligation stays replayable until it settles.
+- **Published outbox rows** older than their window are deleted. **Unpublished
+  rows are never touched**, however old — an undelivered event survives until
+  the relay ships it.
+
+The server runs this on an opt-in ticker: set `PRUNE_INTERVAL` (e.g. `1h`).
+`KEY_RETENTION` defaults to `720h` — 30 days, a conservative multiple of the
+field (Stripe expires keys after 24 hours, Adyen after about 7 days) — and
+`OUTBOX_RETENTION` to `168h` (7 days). Left unset, nothing is pruned; the demo
+compose stack keeps full history.
+
+**The contract:** a retry that arrives after its key was pruned is a **new
+operation — a duplicate**. Retention must exceed the longest possible client
+retry horizon, and no client may retry a request older than the window. Every
+real payments ledger lives with this edge; the integration suite pins it
+(`TestPG_Prune_Retention`) rather than pretending otherwise.
+
 ## Limitations
 
 Scope decisions, stated as such:

@@ -17,6 +17,16 @@ the API).
   add-only) cover fee splits, atomic multi-debit rejection, n-leg idempotent
   replay, and concurrent n-leg conservation.
 
+- Idempotency-key retention and outbox pruning: `ledger_prune(key_retention,
+  outbox_retention)` (migration 0005) NULLs idempotency keys older than the
+  window — ledger rows are never deleted, and active holds keep their keys —
+  and deletes published outbox rows past theirs (unpublished rows are never
+  touched). The server gains an opt-in retention ticker: `PRUNE_INTERVAL`
+  gates it, `KEY_RETENTION` (default 30 days) and `OUTBOX_RETENTION` (default
+  7 days) size the windows. The retry contract is documented and pinned by an
+  integration test: a retry arriving after its key was pruned is a new
+  operation.
+
 ### Changed
 
 - **Breaking (v0.x):** the `ledger.Store` interface replaces
