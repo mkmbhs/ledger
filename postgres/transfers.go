@@ -38,7 +38,7 @@ func (s *Store) ApplyPosting(ctx context.Context, req ledger.PostRequest) (ledge
 		if existing, ok, err := readTransferByKey(ctx, tx, req.IdempotencyKey); err != nil {
 			return err
 		} else if ok {
-			if !ledger.MatchesPostings(existing.Entries, req.Postings) {
+			if !ledger.MatchesPost(existing, req) {
 				return ledger.ErrIdempotencyConflict
 			}
 			result = existing
@@ -102,7 +102,7 @@ func (s *Store) ApplyPosting(ctx context.Context, req ledger.PostRequest) (ledge
 		if !ok {
 			return ledger.Transfer{}, err
 		}
-		if !ledger.MatchesPostings(existing.Entries, req.Postings) {
+		if !ledger.MatchesPost(existing, req) {
 			return ledger.Transfer{}, ledger.ErrIdempotencyConflict
 		}
 		return existing, nil

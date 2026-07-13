@@ -119,19 +119,28 @@ type PostRequest struct {
 	Postings       []Posting
 }
 
-// MatchesPostings reports whether a transfer's entries record exactly the
-// given posting set (same accounts, same signed amounts, order ignored).
-// Stores use it to distinguish an idempotent replay from a key reused with
-// different parameters.
-func MatchesPostings(entries []Entry, postings []Posting) bool {
-	if len(entries) != len(postings) {
+// MatchesPost reports whether an existing transfer is the recorded application
+// of req: the same posting set (accounts and signed amounts, order ignored)
+// and — when req declares a Currency — the same currency. Stores use it to
+// distinguish an idempotent replay from a key reused with different
+// parameters, which is a client bug they must reject.
+func MatchesPost(existing Transfer, req PostRequest) bool {
+	if req.Currency != "" && existing.Currency != req.Currency {
 		return false
 	}
-	byAccount := make(map[string]Money, len(entries))
-	for _, e := range entries {
+	if len(existing.Entries) != len(req.Postings) {
+		return false
+	}
+	byAccount := make(map[string]Money, len(existing.Entries))
+	for _, e := range existing.Entries {
 		byAccount[e.AccountID] = e.Amount
 	}
-	for _, p := range postings {
+	seen := make(map[string]bool, len(req.Postings))
+	for _, p := range req.Postings {
+		if seen[p.AccountID] {
+			return false // repeated legs can never equal a set of distinct entries
+		}
+		seen[p.AccountID] = true
 		if amt, ok := byAccount[p.AccountID]; !ok || amt != p.Amount {
 			return false
 		}

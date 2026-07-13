@@ -82,23 +82,29 @@ func (s *MemStore) ApplyPosting(_ context.Context, req PostRequest) (Transfer, e
 	defer s.mu.Unlock()
 
 	// Idempotency: a repeated key returns the original transfer. The same key
-	// with a different posting set is a client bug and is rejected.
+	// with a different posting set (or declared currency) is a client bug and
+	// is rejected.
 	if id, ok := s.byIdemKey[req.IdempotencyKey]; ok {
 		existing := s.transfers[id]
-		if !MatchesPostings(existing.Entries, req.Postings) {
+		if !MatchesPost(existing, req) {
 			return Transfer{}, ErrIdempotencyConflict
 		}
 		return existing, nil
 	}
 
-	// Every account must exist and carry one shared currency: the declared
-	// req.Currency if given, otherwise the currency of the accounts themselves.
-	currency := req.Currency
+	// Every account must exist — checked for all legs before anything else, so
+	// error precedence matches the PostgreSQL store, which locks (and thereby
+	// existence-checks) every account before validating currencies.
 	for _, p := range req.Postings {
-		a, ok := s.accounts[p.AccountID]
-		if !ok {
+		if _, ok := s.accounts[p.AccountID]; !ok {
 			return Transfer{}, ErrAccountNotFound
 		}
+	}
+	// One shared currency: the declared req.Currency if given, otherwise the
+	// accounts', which must all agree.
+	currency := req.Currency
+	for _, p := range req.Postings {
+		a := s.accounts[p.AccountID]
 		if currency == "" {
 			currency = a.Currency
 		}
@@ -106,10 +112,21 @@ func (s *MemStore) ApplyPosting(_ context.Context, req PostRequest) (Transfer, e
 			return Transfer{}, ErrCurrencyMismatch
 		}
 	}
-	// Every debited leg may only spend AVAILABLE funds: money reserved by an
-	// active hold cannot be moved out from under it.
+	// Funds: compute every account's post-state and refuse the write if any
+	// balance would drop below zero or below its held amount. For valid
+	// requests (one leg per account) this is exactly the available-funds check —
+	// money reserved by an active hold cannot be moved out from under it — and
+	// it doubles as the backstop the schema's CHECK constraints give the
+	// PostgreSQL store, so the in-memory spec is never the weaker of the two.
+	newBalance := make(map[string]Money, len(req.Postings))
 	for _, p := range req.Postings {
-		if p.Amount < 0 && s.accounts[p.AccountID].Available() < -p.Amount {
+		if _, ok := newBalance[p.AccountID]; !ok {
+			newBalance[p.AccountID] = s.accounts[p.AccountID].Balance
+		}
+		newBalance[p.AccountID] += p.Amount
+	}
+	for id, b := range newBalance {
+		if b < 0 || b < s.accounts[id].Held {
 			return Transfer{}, ErrInsufficientFunds
 		}
 	}

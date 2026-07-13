@@ -32,10 +32,9 @@ obvious and testable.
 ## Core concepts
 
 **Double-entry.** Every transfer posts balanced `entries` that sum to zero: a
-two-party transfer is one debit and one credit, and a **multi-leg posting**
-(one debit, many credits — a fee split, a settlement) is any balanced set,
-applied atomically. Money is never created or destroyed; the books always
-balance.
+two-party transfer is one debit and one credit, and a **multi-leg posting** —
+a fee split, a settlement, any balanced set of debits and credits — applies
+atomically. Money is never created or destroyed; the books always balance.
 
 **Integer money.** Amounts are `int64` minor units (e.g. cents). Never a float.
 

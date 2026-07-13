@@ -452,6 +452,15 @@ var scenarioPostingIdempotentReplay = sc(func(t *testing.T, s ledger.Store) {
 	}); !errors.Is(err, ledger.ErrIdempotencyConflict) {
 		t.Errorf("err = %v, want ErrIdempotencyConflict", err)
 	}
+	// Same key and postings but a different declared currency is a conflict
+	// too: the currency is part of the request, so it is part of the replay.
+	if _, err := s.ApplyPosting(context.Background(), ledger.PostRequest{
+		IdempotencyKey: "split",
+		Currency:       "EUR",
+		Postings:       req.Postings,
+	}); !errors.Is(err, ledger.ErrIdempotencyConflict) {
+		t.Errorf("currency-mismatched replay err = %v, want ErrIdempotencyConflict", err)
+	}
 	AssertInvariants(t, s, map[string]ledger.Money{"alice": 1000, "merchant": 0, "fees": 0})
 })
 

@@ -14,8 +14,10 @@
 //
 // An implementation may claim it "passes mkmbhs/ledger conformance v1" when
 // Run is green, including under the race detector (go test -race). The
-// scenario catalog is add-only while Version stays the same, so a store that
-// passes today keeps compiling and keeps passing until Version changes.
+// scenario catalog is add-only while Version stays the same — scenarios are
+// never changed or removed, so the claim keeps a stable meaning. The catalog
+// version governs the scenarios, not compilation: the module itself follows
+// SemVer v0.x, so the Store interface may still evolve between minor releases.
 //
 // See the package README for the scenario catalog and versioning policy.
 package ledgertest
