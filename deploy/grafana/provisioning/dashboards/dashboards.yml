@@ -1,0 +1,10 @@
+apiVersion: 1
+
+# File provider: every dashboard JSON in this directory appears in Grafana at
+# startup, read-only. The compose stack mounts deploy/grafana/provisioning at
+# /etc/grafana/provisioning, so no clicking is ever required.
+providers:
+  - name: ledger
+    type: file
+    options:
+      path: /etc/grafana/provisioning/dashboards

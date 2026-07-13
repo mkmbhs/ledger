@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"google.golang.org/grpc"
@@ -60,5 +61,26 @@ func TestUnaryServerInterceptor_CountsByCode(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(counter); got != before+1 {
 		t.Fatalf("counter = %v, want %v", got, before+1)
+	}
+}
+
+func TestOutboxMetrics(t *testing.T) {
+	before := testutil.ToFloat64(outboxPublished)
+	AddOutboxPublished(3)
+	if got := testutil.ToFloat64(outboxPublished); got != before+3 {
+		t.Fatalf("published counter = %v, want %v", got, before+3)
+	}
+
+	SetOutboxBacklog(7, 42*time.Second)
+	if got := testutil.ToFloat64(outboxUnpublished); got != 7 {
+		t.Fatalf("unpublished gauge = %v, want 7", got)
+	}
+	if got := testutil.ToFloat64(outboxLag); got != 42 {
+		t.Fatalf("lag gauge = %v, want 42", got)
+	}
+	// An empty backlog reads as zeros, not stale values.
+	SetOutboxBacklog(0, 0)
+	if testutil.ToFloat64(outboxUnpublished) != 0 || testutil.ToFloat64(outboxLag) != 0 {
+		t.Fatal("backlog gauges did not reset to zero")
 	}
 }

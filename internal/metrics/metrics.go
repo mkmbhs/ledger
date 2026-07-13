@@ -58,11 +58,41 @@ var (
 		},
 		[]string{"method"},
 	)
+	outboxPublished = factory.NewCounter(
+		prometheus.CounterOpts{
+			Name: "ledger_outbox_published_total",
+			Help: "Total outbox events published to the broker.",
+		},
+	)
+	outboxUnpublished = factory.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "ledger_outbox_unpublished",
+			Help: "Outbox rows not yet published (the relay's backlog).",
+		},
+	)
+	outboxLag = factory.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "ledger_outbox_lag_seconds",
+			Help: "Age in seconds of the oldest unpublished outbox row; 0 when the backlog is empty.",
+		},
+	)
 )
 
 // Handler returns the /metrics endpoint that exposes the private registry.
 func Handler() http.Handler {
 	return promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
+}
+
+// AddOutboxPublished counts events the relay delivered to the broker.
+func AddOutboxPublished(n int) { outboxPublished.Add(float64(n)) }
+
+// SetOutboxBacklog records the relay's current backlog: how many rows await
+// publication and how old the oldest of them is. A healthy relay keeps both
+// near zero; a broker outage makes both climb (and nothing is lost — see the
+// outbox package).
+func SetOutboxBacklog(unpublished int64, lag time.Duration) {
+	outboxUnpublished.Set(float64(unpublished))
+	outboxLag.Set(lag.Seconds())
 }
 
 // HTTPMiddleware wraps next, counting every request and observing its latency,

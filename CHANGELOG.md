@@ -5,7 +5,7 @@ Notable changes to this module. The format follows
 [SemVer](https://semver.org) with v0.x semantics (minor versions may change
 the API).
 
-## [Unreleased]
+## [0.2.0] — 2026-07-13
 
 ### Added
 
@@ -26,6 +26,14 @@ the API).
   7 days) size the windows. The retry contract is documented and pinned by an
   integration test: a retry arriving after its key was pruned is a new
   operation.
+
+- Outbox observability: `ledger_outbox_published_total`,
+  `ledger_outbox_unpublished`, and `ledger_outbox_lag_seconds` metrics, and a
+  provisioned Grafana dashboard (money movements/s, latency p99, outbox
+  backlog and lag) that appears on `docker compose up` with no clicking.
+
+- Terminal captures in the README: the demo lifecycle and the load test ending
+  on its conservation invariant.
 
 ### Changed
 

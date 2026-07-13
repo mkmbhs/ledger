@@ -6,3 +6,5 @@ datasources:
     access: proxy
     url: http://prometheus:9090
     isDefault: true
+    # Stable uid so the provisioned dashboard can reference this datasource.
+    uid: prometheus

@@ -114,7 +114,7 @@ func run() error {
 	// into a separate worker for horizontal scale.
 	pub := outbox.NewKafkaPublisher(cfg.kafkaBrokers, cfg.kafkaTopic)
 	defer pub.Close()
-	relayDone := startRelay(ctx, outbox.NewRelay(pool, pub), cfg.relayEvery)
+	relayDone := startRelay(ctx, outbox.NewRelay(pool, pub), pool, cfg.relayEvery)
 
 	// Retention: an opt-in ticker applying ledger_prune (migrations/0005).
 	// Disabled unless PRUNE_INTERVAL is set, so the demo stack keeps full
@@ -219,9 +219,10 @@ func startPruner(ctx context.Context, store *postgres.Store, cfg config) <-chan 
 	return done
 }
 
-// startRelay drains the outbox to Kafka on a ticker until ctx is cancelled. It
-// returns a channel closed once the loop has exited.
-func startRelay(ctx context.Context, relay *outbox.Relay, every time.Duration) <-chan struct{} {
+// startRelay drains the outbox to Kafka on a ticker until ctx is cancelled,
+// recording throughput and backlog metrics on each tick. It returns a channel
+// closed once the loop has exited.
+func startRelay(ctx context.Context, relay *outbox.Relay, pool *pgxpool.Pool, every time.Duration) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -232,10 +233,24 @@ func startRelay(ctx context.Context, relay *outbox.Relay, every time.Duration) <
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				if n, err := relay.Drain(context.Background(), 100); err != nil {
+				n, err := relay.Drain(context.Background(), 100)
+				metrics.AddOutboxPublished(n) // counts rows delivered even when the batch later failed
+				if err != nil {
 					log.Printf("relay: %v", err)
 				} else if n > 0 {
 					log.Printf("relay: published %d event(s)", n)
+				}
+				// Backlog gauges: how many rows still await publication and how
+				// old the oldest is. The partial index on unpublished rows keeps
+				// this a cheap scan of just the tail.
+				var unpublished int64
+				var lagSeconds float64
+				if err := pool.QueryRow(context.Background(), `
+					SELECT count(*), coalesce(extract(epoch FROM now() - min(created_at)), 0)
+					FROM outbox WHERE published_at IS NULL`).Scan(&unpublished, &lagSeconds); err != nil {
+					log.Printf("outbox backlog probe: %v", err)
+				} else {
+					metrics.SetOutboxBacklog(unpublished, time.Duration(lagSeconds*float64(time.Second)))
 				}
 			}
 		}

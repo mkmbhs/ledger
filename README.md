@@ -16,6 +16,11 @@ make race     # go test -race ./...   the idempotency, concurrency + hold proofs
 make run      # go run ./cmd/ledger   a tiny demo
 ```
 
+The repo's thesis in one frame — concurrent load against the full stack, and the
+exit condition is the books balancing:
+
+![loadtest against the compose stack: thousands of concurrent transfers, ending in INVARIANT OK — money conserved](docs/loadtest.gif)
+
 ## The problem
 
 Every wallet, payments, or settlement system has to answer the same questions:
@@ -64,6 +69,11 @@ Authorize ──> hold ACTIVE (funds reserved, Available drops, nothing moved)
 - **Void** is idempotent (voiding twice never double-releases).
 - **Expiry** is deterministic (the clock is injectable) so stale reservations
   don't fence off funds forever.
+
+`make run` walks the whole lifecycle — an idempotent replay applying once, then
+authorize → partial capture with the remainder released:
+
+![the demo: idempotent replay applies once; a 200 hold captures 120 and releases 80](docs/demo.gif)
 
 ## Atomicity lives in the Store
 
@@ -196,7 +206,11 @@ docker compose --profile tools up consumer
 go run ./cmd/loadtest -accounts 50 -workers 32 -duration 10s
 ```
 
-Prometheus is at `:9091`, Grafana (anonymous) at `:3000`.
+Prometheus is at `:9091`. Grafana (anonymous) at `:3000` opens with a
+provisioned **Ledger** dashboard — money movements per second, request latency
+p99, and the outbox relay's backlog and lag — wired to the metrics the server
+already exports. No clicking required; the dashboard ships in
+[`deploy/grafana/provisioning`](deploy/grafana/provisioning).
 
 ## Layout
 
