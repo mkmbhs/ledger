@@ -12,11 +12,13 @@ import (
 
 	"github.com/mkmbhs/ledger"
 	"github.com/mkmbhs/ledger/ledgertest"
+
+	"example.com/mystore"
 )
 
 func TestMyStore_Conformance(t *testing.T) {
 	ledgertest.Run(t, func(t *testing.T) ledger.Store {
-		return mystore.New(...) // a fresh, EMPTY store per call
+		return mystore.New() // a fresh, EMPTY store per call
 	})
 }
 ```

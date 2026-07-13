@@ -16,8 +16,12 @@
 //	go run ./cmd/consumer \
 //	  -brokers=localhost:9092 -topic=ledger.transfers -group=ledger-example-consumer
 //
+// The relay delivers at-least-once, so the consumer dedupes on the event_id
+// header: a redelivered event is recognized and skipped, not double-processed.
+//
 // It is a demo, not production: it logs and skips bad messages rather than
-// dead-lettering them, and it relies on the consumer group to commit offsets.
+// dead-lettering them, keeps its dedupe set in memory, and relies on the
+// consumer group to commit offsets.
 package main
 
 import (
@@ -77,7 +81,15 @@ func main() {
 	log.Printf("consuming topic %q from %s as group %q (Ctrl-C to stop)",
 		*topic, *brokers, *group)
 
-	var consumed int
+	// At-least-once delivery means redeliveries happen (a relay crash between
+	// publishing and stamping, a group rebalance). The event_id header is the
+	// dedupe key: ids already processed are skipped. An in-memory set is enough
+	// for a demo — committed offsets keep a restart from replaying far back — a
+	// real consumer would track processed ids in its own durable store (or make
+	// its processing an idempotent upsert keyed on the id).
+	seen := make(map[string]bool)
+
+	var consumed, duplicates int
 	for {
 		// ReadMessage blocks until a message arrives or ctx is cancelled. On
 		// cancellation it returns ctx.Err(), which breaks the loop for shutdown.
@@ -94,6 +106,12 @@ func main() {
 		eventType := header(msg.Headers, "event_type")
 		eventID := header(msg.Headers, "event_id")
 
+		if eventID != "" && seen[eventID] {
+			duplicates++
+			log.Printf("duplicate delivery skipped (event_id=%s)", short(eventID))
+			continue
+		}
+
 		var t transferEvent
 		if err := json.Unmarshal(msg.Value, &t); err != nil {
 			// Malformed payload: report and move on. The offset still commits, so a
@@ -109,10 +127,13 @@ func main() {
 		log.Printf("[%s] id=%s %d %s %s -> %s (event_id=%s)",
 			eventType, short(t.ID), t.Amount, t.Currency,
 			short(t.FromAccountID), short(t.ToAccountID), short(eventID))
+		if eventID != "" {
+			seen[eventID] = true // mark processed only after handling succeeded
+		}
 		consumed++
 	}
 
-	log.Printf("shutting down: consumed %d events", consumed)
+	log.Printf("shutting down: consumed %d events, skipped %d duplicates", consumed, duplicates)
 }
 
 // header returns the value of the first header with the given key, or "" if

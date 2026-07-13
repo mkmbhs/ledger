@@ -290,6 +290,7 @@ var scenarioTransferValidation = sc(func(t *testing.T, s ledger.Store) {
 	if _, err := transfer(s, "y", "alice", "euro", 10); !errors.Is(err, ledger.ErrCurrencyMismatch) {
 		t.Errorf("currency err = %v, want ErrCurrencyMismatch", err)
 	}
+	AssertInvariants(t, s, map[string]ledger.Money{"alice": 1000, "euro": 0})
 })
 
 // scenarioTransferCannotSpendHeldFunds: a direct transfer can spend only
@@ -433,6 +434,7 @@ var scenarioAuthorizeInsufficientAvailable = sc(func(t *testing.T, s ledger.Stor
 	}, now); !errors.Is(err, ledger.ErrInsufficientFunds) {
 		t.Errorf("err = %v, want ErrInsufficientFunds", err)
 	}
+	AssertInvariants(t, s, map[string]ledger.Money{"alice": 1000, "bob": 0})
 })
 
 // scenarioCaptureFull: capturing the full hold moves the money, releases the
@@ -543,6 +545,7 @@ var scenarioCaptureErrors = sc(func(t *testing.T, s ledger.Store) {
 	if _, err := s.Capture(ctx, ledger.CaptureRequest{IdempotencyKey: "z", HoldID: h.ID, Amount: 100}, now); !errors.Is(err, ledger.ErrHoldNotActive) {
 		t.Errorf("capture-after-void err = %v, want ErrHoldNotActive", err)
 	}
+	AssertInvariants(t, s, map[string]ledger.Money{"alice": 1000, "bob": 0})
 })
 
 // scenarioVoidReleasesAndDoubleVoid: void releases the reservation without

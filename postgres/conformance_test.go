@@ -113,8 +113,10 @@ func applyMigration(ctx context.Context, pool *pgxpool.Pool) error {
 
 func reset(t *testing.T) {
 	t.Helper()
+	// The outbox is truncated too: money-moving scenarios write outbox rows, and
+	// each scenario should start from a fully empty schema.
 	if _, err := testPool.Exec(context.Background(),
-		`TRUNCATE entries, transfers, holds, accounts CASCADE`); err != nil {
+		`TRUNCATE outbox, entries, transfers, holds, accounts CASCADE`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 }

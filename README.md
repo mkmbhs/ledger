@@ -96,10 +96,10 @@ Run with the race detector (`make race`):
   transfer exactly once.
 - **No lost updates / no double-spend** — 500 concurrent transfers conserve the
   total balance exactly.
-- **Property-based fuzzing** — `FuzzTransfers` throws millions of random transfer
-  sequences at the ledger and asserts three invariants on every one: money is
-  conserved, each balance equals opening + its entries, and all entries net to
-  zero.
+- **Property-based fuzzing** — `FuzzTransfers` asserts three invariants on
+  every randomized transfer sequence: money is conserved, each balance equals
+  opening + its entries, and all entries net to zero. The seed corpus runs on
+  every `go test`; `go test -fuzz FuzzTransfers` explores millions of inputs.
 - **The hold lifecycle** — reserve-without-moving, full and partial capture,
   void (and idempotent double-void), expiry, and that a direct transfer can never
   spend held funds.
@@ -238,7 +238,8 @@ Why not just use an existing system? Depending on what you need, do:
 - [Formance](https://github.com/formancehq/ledger),
   [Blnk](https://github.com/blnkfinance/blnk), and
   [Midaz](https://github.com/LerianStudio/midaz) ship these invariants as
-  products: platforms with consoles, SDKs, and multi-leg posting DSLs.
+  products: platforms with consoles, SDKs, and multi-leg postings (Formance
+  and Midaz each with a posting DSL).
 - [pgledger](https://github.com/pgr0ss/pgledger) is the closest relative — a
   readable, pure-PostgreSQL ledger that makes the opposite bet: all logic lives
   in PL/pgSQL functions with a single implementation (and no idempotency keys
