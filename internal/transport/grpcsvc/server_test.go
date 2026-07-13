@@ -167,3 +167,53 @@ func TestServer_ErrorMapping(t *testing.T) {
 		t.Fatalf("missing key: code = %v, want InvalidArgument (err=%v)", got, err)
 	}
 }
+
+// TestCreatePosting exercises the multi-leg gRPC surface end to end: a fee
+// split applies atomically and an unbalanced set is InvalidArgument.
+func TestCreatePosting(t *testing.T) {
+	client, svc := newClient(t)
+	ctx := context.Background()
+	if err := svc.CreateAccount(ctx, "alice", "USD", 1000); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.CreateAccount(ctx, "merchant", "USD", 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.CreateAccount(ctx, "fees", "USD", 0); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := client.CreatePosting(ctx, &ledgerv1.CreatePostingRequest{
+		IdempotencyKey: "split",
+		Postings: []*ledgerv1.Posting{
+			{AccountId: "alice", Amount: -100},
+			{AccountId: "merchant", Amount: 97},
+			{AccountId: "fees", Amount: 3},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreatePosting: %v", err)
+	}
+	if got := resp.GetTransfer(); len(got.GetEntries()) != 3 || got.GetFromAccountId() != "" {
+		t.Errorf("transfer = %+v, want 3 entries and empty two-leg summary", got)
+	}
+
+	acct, err := client.GetAccount(ctx, &ledgerv1.GetAccountRequest{Id: "merchant"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acct.GetAccount().GetBalance() != 97 {
+		t.Errorf("merchant = %d, want 97", acct.GetAccount().GetBalance())
+	}
+
+	_, err = client.CreatePosting(ctx, &ledgerv1.CreatePostingRequest{
+		IdempotencyKey: "bad",
+		Postings: []*ledgerv1.Posting{
+			{AccountId: "alice", Amount: -100},
+			{AccountId: "merchant", Amount: 90},
+		},
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Errorf("unbalanced err = %v, want InvalidArgument", err)
+	}
+}

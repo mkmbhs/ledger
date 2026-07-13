@@ -131,8 +131,12 @@ func createAccount(t *testing.T, id, ccy string, opening ledger.Money) {
 
 func transfer(t *testing.T, key, from, to string, amt ledger.Money) (ledger.Transfer, error) {
 	t.Helper()
-	return testStore.ApplyTransfer(context.Background(), ledger.TransferRequest{
-		IdempotencyKey: key, FromAccountID: from, ToAccountID: to, Amount: amt,
+	return testStore.ApplyPosting(context.Background(), ledger.PostRequest{
+		IdempotencyKey: key,
+		Postings: []ledger.Posting{
+			{AccountID: from, Amount: -amt},
+			{AccountID: to, Amount: amt},
+		},
 	})
 }
 

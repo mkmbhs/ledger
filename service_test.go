@@ -284,3 +284,76 @@ func TestCreateAccount_DoesNotResetLiveBalance(t *testing.T) {
 		t.Errorf("bob balance = %d, want 250 (unchanged)", got)
 	}
 }
+
+// TestPost_Validation pins the Service-level shape checks for multi-leg
+// postings: each violation gets its own sentinel and nothing reaches the store.
+func TestPost_Validation(t *testing.T) {
+	s := newService(t)
+	mustAccount(t, s, "alice", "USD", 1000)
+	mustAccount(t, s, "bob", "USD", 0)
+	ctx := context.Background()
+
+	cases := []struct {
+		name string
+		req  PostRequest
+		want error
+	}{
+		{"missing key", PostRequest{Postings: []Posting{{"alice", -1}, {"bob", 1}}}, ErrMissingIdempotencyKey},
+		{"too few postings", PostRequest{IdempotencyKey: "k", Postings: []Posting{{"alice", -1}}}, ErrTooFewPostings},
+		{"zero amount", PostRequest{IdempotencyKey: "k", Postings: []Posting{{"alice", 0}, {"bob", 0}}}, ErrZeroPosting},
+		{"duplicate account", PostRequest{IdempotencyKey: "k", Postings: []Posting{{"alice", -1}, {"alice", 1}}}, ErrDuplicateAccount},
+		{"unbalanced", PostRequest{IdempotencyKey: "k", Postings: []Posting{{"alice", -2}, {"bob", 1}}}, ErrUnbalancedPostings},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := s.Post(ctx, tc.req); !errors.Is(err, tc.want) {
+				t.Errorf("Post err = %v, want %v", err, tc.want)
+			}
+		})
+	}
+	if got := balance(t, s, "alice"); got != 1000 {
+		t.Errorf("alice = %d, want 1000 (no rejected request may move money)", got)
+	}
+}
+
+// TestPost_FeeSplit exercises the service path end to end: a three-leg split
+// applies atomically and a replay of the same key applies exactly once.
+func TestPost_FeeSplit(t *testing.T) {
+	s := newService(t)
+	mustAccount(t, s, "alice", "USD", 1000)
+	mustAccount(t, s, "merchant", "USD", 0)
+	mustAccount(t, s, "fees", "USD", 0)
+	ctx := context.Background()
+
+	req := PostRequest{
+		IdempotencyKey: "split",
+		Postings: []Posting{
+			{AccountID: "alice", Amount: -100},
+			{AccountID: "merchant", Amount: 97},
+			{AccountID: "fees", Amount: 3},
+		},
+	}
+	first, err := s.Post(ctx, req)
+	if err != nil {
+		t.Fatalf("Post: %v", err)
+	}
+	second, err := s.Post(ctx, req)
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if first.ID != second.ID {
+		t.Errorf("replay produced a different transfer")
+	}
+	if got := balance(t, s, "alice"); got != 900 {
+		t.Errorf("alice = %d, want 900 (applied once)", got)
+	}
+	if got := balance(t, s, "merchant"); got != 97 {
+		t.Errorf("merchant = %d, want 97", got)
+	}
+	if got := balance(t, s, "fees"); got != 3 {
+		t.Errorf("fees = %d, want 3", got)
+	}
+	if err := AssertBalanced(first.Entries); err != nil {
+		t.Errorf("entries: %v", err)
+	}
+}

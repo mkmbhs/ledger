@@ -12,41 +12,60 @@ import (
 
 const transferCols = `id, idempotency_key, from_account_id, to_account_id, amount, currency, status, created_at`
 
-// ApplyTransfer atomically and idempotently moves req.Amount from one account to
-// another, recording the transfer and its two balanced entries.
-func (s *Store) ApplyTransfer(ctx context.Context, req ledger.TransferRequest) (ledger.Transfer, error) {
+// ApplyPosting atomically and idempotently applies a balanced multi-leg
+// posting: every account row is locked (in sorted order), every debited leg is
+// funds-checked against its available balance, and the transfer, its entries,
+// the balance changes, and the outbox event commit together or not at all. A
+// two-party transfer is simply the two-leg case.
+func (s *Store) ApplyPosting(ctx context.Context, req ledger.PostRequest) (ledger.Transfer, error) {
 	var result ledger.Transfer
 	err := s.inTx(ctx, func(tx pgx.Tx) error {
-		// Lock both accounts FIRST (in a consistent order), THEN check idempotency.
-		// Locking first is what makes a concurrent same-key retry correct: it
-		// serializes behind the original transaction and, once it holds the locks,
-		// sees the committed transfer in the pre-check below — returning the
-		// original result instead of re-running the funds check, which could
-		// otherwise spuriously fail after the original already debited the source.
-		from, to, err := lockAccounts(ctx, tx, req.FromAccountID, req.ToAccountID)
+		// Lock every posted account FIRST (in a consistent order), THEN check
+		// idempotency. Locking first is what makes a concurrent same-key retry
+		// correct: it serializes behind the original transaction and, once it
+		// holds the locks, sees the committed transfer in the pre-check below —
+		// returning the original result instead of re-running the funds check,
+		// which could otherwise spuriously fail after the original already
+		// debited the sources.
+		ids := make([]string, len(req.Postings))
+		for i, p := range req.Postings {
+			ids[i] = p.AccountID
+		}
+		accounts, err := lockAccounts(ctx, tx, ids)
 		if err != nil {
 			return err
 		}
 		if existing, ok, err := readTransferByKey(ctx, tx, req.IdempotencyKey); err != nil {
 			return err
 		} else if ok {
-			if conflictsTransfer(existing, req) {
+			if !ledger.MatchesPostings(existing.Entries, req.Postings) {
 				return ledger.ErrIdempotencyConflict
 			}
 			result = existing
 			return nil
 		}
 
-		if from.Currency != to.Currency {
-			return ledger.ErrCurrencyMismatch
+		// One shared currency: the declared req.Currency if given, otherwise the
+		// accounts', which must all agree.
+		currency := req.Currency
+		for _, p := range req.Postings {
+			a := accounts[p.AccountID]
+			if currency == "" {
+				currency = a.Currency
+			}
+			if a.Currency != currency {
+				return ledger.ErrCurrencyMismatch
+			}
 		}
-		// A transfer may only spend AVAILABLE funds: money fenced off by an active
-		// hold cannot be moved out from under it.
-		if from.Available() < req.Amount {
-			return ledger.ErrInsufficientFunds
+		// Every debited leg may only spend AVAILABLE funds: money fenced off by
+		// an active hold cannot be moved out from under it.
+		for _, p := range req.Postings {
+			if p.Amount < 0 && accounts[p.AccountID].Available() < -p.Amount {
+				return ledger.ErrInsufficientFunds
+			}
 		}
 
-		t := buildTransfer(req.IdempotencyKey, from.ID, to.ID, from.Currency, req.Amount, time.Now().UTC())
+		t := ledger.NewPostedTransfer(req.IdempotencyKey, currency, req.Postings, time.Now().UTC(), newID)
 		// The double-entry invariant is enforced on every path that writes
 		// entries; a failure here rolls the transaction back untouched.
 		if err := ledger.AssertBalanced(t.Entries); err != nil {
@@ -58,11 +77,11 @@ func (s *Store) ApplyTransfer(ctx context.Context, req ledger.TransferRequest) (
 			}
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE accounts SET balance = balance - $1 WHERE id = $2`, int64(req.Amount), from.ID); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `UPDATE accounts SET balance = balance + $1 WHERE id = $2`, int64(req.Amount), to.ID); err != nil {
-			return err
+		for _, p := range req.Postings {
+			if _, err := tx.Exec(ctx, `UPDATE accounts SET balance = balance + $1 WHERE id = $2`,
+				int64(p.Amount), p.AccountID); err != nil {
+				return err
+			}
 		}
 		// Emit the domain event in THIS transaction, so it commits atomically with
 		// the balance moves (transactional outbox — no dual-write window).
@@ -74,7 +93,7 @@ func (s *Store) ApplyTransfer(ctx context.Context, req ledger.TransferRequest) (
 	})
 	if errors.Is(err, errDuplicate) {
 		// Lost the insert race to a concurrent same-key transaction (only possible
-		// when the two requests target different account pairs and thus share no
+		// when the two requests post to disjoint account sets and thus share no
 		// lock). Re-read the committed row and honor idempotency.
 		existing, ok, rerr := readTransferByKey(ctx, s.pool, req.IdempotencyKey)
 		if rerr != nil {
@@ -83,7 +102,7 @@ func (s *Store) ApplyTransfer(ctx context.Context, req ledger.TransferRequest) (
 		if !ok {
 			return ledger.Transfer{}, err
 		}
-		if conflictsTransfer(existing, req) {
+		if !ledger.MatchesPostings(existing.Entries, req.Postings) {
 			return ledger.Transfer{}, ledger.ErrIdempotencyConflict
 		}
 		return existing, nil
@@ -111,34 +130,22 @@ func (s *Store) GetTransfer(ctx context.Context, id string) (ledger.Transfer, bo
 	return t, true, nil
 }
 
-// buildTransfer constructs a posted transfer with its two balanced entries: a
-// debit on the source and a matching credit on the destination, summing to zero.
-func buildTransfer(key, fromID, toID, currency string, amount ledger.Money, createdAt time.Time) ledger.Transfer {
-	tid := newID()
-	return ledger.Transfer{
-		ID:             tid,
-		IdempotencyKey: key,
-		FromAccountID:  fromID,
-		ToAccountID:    toID,
-		Amount:         amount,
-		Currency:       currency,
-		Status:         ledger.StatusPosted,
-		CreatedAt:      createdAt,
-		Entries: []ledger.Entry{
-			{ID: newID(), TransferID: tid, AccountID: fromID, Amount: -amount, CreatedAt: createdAt},
-			{ID: newID(), TransferID: tid, AccountID: toID, Amount: amount, CreatedAt: createdAt},
-		},
-	}
-}
-
-// insertTransferRows writes the transfer row and its entries. The UNIQUE
-// constraint on transfers.idempotency_key turns a concurrent duplicate into a
-// 23505 the caller maps to errDuplicate.
+// insertTransferRows writes the transfer row and its entries. The two-leg
+// summary columns (from_account_id, to_account_id, amount) are NULL for larger
+// postings — the entries are the record. The UNIQUE constraint on
+// transfers.idempotency_key turns a concurrent duplicate into a 23505 the
+// caller maps to errDuplicate.
 func insertTransferRows(ctx context.Context, q querier, t ledger.Transfer) error {
+	var fromID, toID *string
+	var amount *int64
+	if t.FromAccountID != "" {
+		a := int64(t.Amount)
+		fromID, toID, amount = &t.FromAccountID, &t.ToAccountID, &a
+	}
 	if _, err := q.Exec(ctx, `
 		INSERT INTO transfers (id, idempotency_key, from_account_id, to_account_id, amount, currency, status, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		t.ID, t.IdempotencyKey, t.FromAccountID, t.ToAccountID, int64(t.Amount), t.Currency, string(t.Status), t.CreatedAt); err != nil {
+		t.ID, t.IdempotencyKey, fromID, toID, amount, t.Currency, string(t.Status), t.CreatedAt); err != nil {
 		return err
 	}
 	for _, e := range t.Entries {
@@ -170,12 +177,13 @@ func readTransferByKey(ctx context.Context, q querier, key string) (ledger.Trans
 	return t, true, nil
 }
 
-// loadEntries returns a transfer's entries, debit (negative) before credit.
+// loadEntries returns a transfer's entries, debits (negative) before credits,
+// with id as the tiebreak so the order is deterministic.
 func loadEntries(ctx context.Context, q querier, transferID string) ([]ledger.Entry, error) {
 	rows, err := q.Query(ctx, `
 		SELECT id, transfer_id, account_id, amount, created_at
 		FROM entries WHERE transfer_id = $1
-		ORDER BY amount`, transferID)
+		ORDER BY amount, id`, transferID)
 	if err != nil {
 		return nil, err
 	}
@@ -193,21 +201,22 @@ func loadEntries(ctx context.Context, q querier, transferID string) ([]ledger.En
 
 func scanTransfer(row pgx.Row) (ledger.Transfer, error) {
 	var t ledger.Transfer
-	var amount int64
+	var fromID, toID *string
+	var amount *int64
 	var status string
-	if err := row.Scan(&t.ID, &t.IdempotencyKey, &t.FromAccountID, &t.ToAccountID,
+	if err := row.Scan(&t.ID, &t.IdempotencyKey, &fromID, &toID,
 		&amount, &t.Currency, &status, &t.CreatedAt); err != nil {
 		return ledger.Transfer{}, err
 	}
-	t.Amount = ledger.Money(amount)
+	if fromID != nil {
+		t.FromAccountID = *fromID
+	}
+	if toID != nil {
+		t.ToAccountID = *toID
+	}
+	if amount != nil {
+		t.Amount = ledger.Money(*amount)
+	}
 	t.Status = ledger.TransferStatus(status)
 	return t, nil
-}
-
-// conflictsTransfer reports whether an existing transfer with a reused key was
-// created with different parameters — a client bug the reference store rejects.
-func conflictsTransfer(existing ledger.Transfer, req ledger.TransferRequest) bool {
-	return existing.FromAccountID != req.FromAccountID ||
-		existing.ToAccountID != req.ToAccountID ||
-		existing.Amount != req.Amount
 }

@@ -50,7 +50,7 @@ the same safety check every scenario here ends with: no negative balances,
 `held <= balance`, each balance reconciles to opening + its entries, and the
 total across accounts is conserved.
 
-## Scenario catalog (v1, 20 scenarios)
+## Scenario catalog (v1, 26 scenarios)
 
 Transfers:
 
@@ -62,6 +62,15 @@ Transfers:
 - `transfer/insufficient-funds` — an overdraft attempt is rejected and changes nothing.
 - `transfer/unknown-account-and-currency-mismatch` — sentinel errors for a missing account and mismatched currencies.
 - `transfer/cannot-spend-held-funds` — a transfer can spend only available funds; active holds fence off theirs.
+
+Multi-leg postings:
+
+- `posting/three-leg-fee-split` — one debit funds several credits atomically; the two-leg summary stays empty, the entries are the record.
+- `posting/unbalanced-rejected` — a store must refuse a posting set that does not sum to zero, leaving no trace.
+- `posting/single-leg-rejected` — a single leg can never balance; refused with no state change.
+- `posting/idempotent-replay-and-conflict` — an n-leg replay returns the original transfer and applies once; the same key with a different split is rejected.
+- `posting/concurrent-conservation` — concurrent 3-leg postings over overlapping account sets conserve the total and never deadlock.
+- `posting/multi-debit-insufficient-funds` — if one debited account of several lacks available funds, no account moves at all.
 
 Accounts:
 

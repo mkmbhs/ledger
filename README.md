@@ -31,8 +31,11 @@ obvious and testable.
 
 ## Core concepts
 
-**Double-entry.** Every transfer posts two `entries` — a debit and a credit that
-sum to zero. Money is never created or destroyed; the books always balance.
+**Double-entry.** Every transfer posts balanced `entries` that sum to zero: a
+two-party transfer is one debit and one credit, and a **multi-leg posting**
+(one debit, many credits — a fee split, a settlement) is any balanced set,
+applied atomically. Money is never created or destroyed; the books always
+balance.
 
 **Integer money.** Amounts are `int64` minor units (e.g. cents). Never a float.
 
@@ -80,9 +83,9 @@ the `Service`; atomic, idempotent application lives behind the `Store` interface
   makes the database itself refuse a commit whose entries don't balance.
 
 Both stores pass **the same conformance suite**, exported as the
-[`ledgertest`](ledgertest/) package (20 scenarios: idempotent replay under
-concurrency, conservation, the hold lifecycle, invariant checks after every
-scenario). The MemStore run needs nothing but `go test ./...`; the PostgreSQL
+[`ledgertest`](ledgertest/) package (26 scenarios: idempotent replay under
+concurrency, conservation, multi-leg postings, the hold lifecycle, invariant
+checks after every scenario). The MemStore run needs nothing but `go test ./...`; the PostgreSQL
 run is the same suite against a real database via testcontainers
 (`go test -tags=integration ./...`). Any other `ledger.Store` implementation
 can import `ledgertest` and make the same claim — see
@@ -100,6 +103,10 @@ Run with the race detector (`make race`):
   every randomized transfer sequence: money is conserved, each balance equals
   opening + its entries, and all entries net to zero. The seed corpus runs on
   every `go test`; `go test -fuzz FuzzTransfers` explores millions of inputs.
+- **Multi-leg postings are all-or-nothing** — a fee split lands atomically, an
+  n-leg replay applies once, concurrent n-leg postings over overlapping account
+  sets conserve the total without deadlocking, and if one debited account of
+  several lacks funds, no account moves at all.
 - **The hold lifecycle** — reserve-without-moving, full and partial capture,
   void (and idempotent double-void), expiry, and that a direct transfer can never
   spend held funds.
@@ -170,6 +177,11 @@ curl -XPOST localhost:8080/v1/accounts  -d '{"id":"alice","currency":"USD","open
 curl -XPOST localhost:8080/v1/accounts  -d '{"id":"bob","currency":"USD","opening":0}'
 curl -XPOST localhost:8080/v1/transfers -d '{"idempotency_key":"k1","from_account_id":"alice","to_account_id":"bob","amount":250}'
 curl localhost:8080/v1/accounts/alice            # balance now 750
+
+# a multi-leg posting: one debit funds several credits atomically (fee split)
+curl -XPOST localhost:8080/v1/accounts  -d '{"id":"fees","currency":"USD","opening":0}'
+curl -XPOST localhost:8080/v1/postings -d '{"idempotency_key":"k2","postings":[
+  {"account_id":"alice","amount":-100},{"account_id":"bob","amount":97},{"account_id":"fees","amount":3}]}'
 curl localhost:8080/metrics                        # Prometheus metrics
 
 # gRPC (reflection is enabled)
@@ -216,9 +228,10 @@ Scope decisions, stated as such:
 - **One currency per transfer.** Both accounts must carry the same currency;
   there is no FX inside the ledger. Converting money is a business workflow
   (two transfers and a rate), not a storage primitive.
-- **Transfers are two-legged.** Every transfer is one debit and one matching
-  credit. Fee splits and multi-party settlements are modeled as multiple
-  transfers.
+- **Captures are two-legged.** Multi-leg postings cover fee splits and
+  settlements, but capturing a hold always settles source-to-destination:
+  multi-credit capture would need a proration policy with no pedagogical
+  payoff here.
 - **No authentication or multi-tenancy.** The REST and gRPC APIs are reference
   transports for the domain service; put them behind your own gateway.
 - **The Kafka consumer is reference-grade.** It shows at-least-once consumption

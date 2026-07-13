@@ -26,6 +26,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	LedgerService_Transfer_FullMethodName          = "/ledger.v1.LedgerService/Transfer"
+	LedgerService_CreatePosting_FullMethodName     = "/ledger.v1.LedgerService/CreatePosting"
 	LedgerService_Authorize_FullMethodName         = "/ledger.v1.LedgerService/Authorize"
 	LedgerService_Capture_FullMethodName           = "/ledger.v1.LedgerService/Capture"
 	LedgerService_Void_FullMethodName              = "/ledger.v1.LedgerService/Void"
@@ -42,6 +43,10 @@ type LedgerServiceClient interface {
 	// Transfer atomically moves money from one account to another. Safe to retry
 	// with the same idempotency_key: the transfer is applied at most once.
 	Transfer(ctx context.Context, in *TransferRequest, opts ...grpc.CallOption) (*TransferResponse, error)
+	// CreatePosting atomically applies a balanced multi-leg posting: two or more
+	// signed legs that sum to zero (a fee split, a settlement). Safe to retry
+	// with the same idempotency_key.
+	CreatePosting(ctx context.Context, in *CreatePostingRequest, opts ...grpc.CallOption) (*CreatePostingResponse, error)
 	// Authorize reserves funds in the source account (an authorization hold),
 	// reducing its available balance without moving money.
 	Authorize(ctx context.Context, in *AuthorizeRequest, opts ...grpc.CallOption) (*AuthorizeResponse, error)
@@ -69,6 +74,16 @@ func (c *ledgerServiceClient) Transfer(ctx context.Context, in *TransferRequest,
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(TransferResponse)
 	err := c.cc.Invoke(ctx, LedgerService_Transfer_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ledgerServiceClient) CreatePosting(ctx context.Context, in *CreatePostingRequest, opts ...grpc.CallOption) (*CreatePostingResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreatePostingResponse)
+	err := c.cc.Invoke(ctx, LedgerService_CreatePosting_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -134,6 +149,10 @@ type LedgerServiceServer interface {
 	// Transfer atomically moves money from one account to another. Safe to retry
 	// with the same idempotency_key: the transfer is applied at most once.
 	Transfer(context.Context, *TransferRequest) (*TransferResponse, error)
+	// CreatePosting atomically applies a balanced multi-leg posting: two or more
+	// signed legs that sum to zero (a fee split, a settlement). Safe to retry
+	// with the same idempotency_key.
+	CreatePosting(context.Context, *CreatePostingRequest) (*CreatePostingResponse, error)
 	// Authorize reserves funds in the source account (an authorization hold),
 	// reducing its available balance without moving money.
 	Authorize(context.Context, *AuthorizeRequest) (*AuthorizeResponse, error)
@@ -159,6 +178,9 @@ type UnimplementedLedgerServiceServer struct{}
 
 func (UnimplementedLedgerServiceServer) Transfer(context.Context, *TransferRequest) (*TransferResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Transfer not implemented")
+}
+func (UnimplementedLedgerServiceServer) CreatePosting(context.Context, *CreatePostingRequest) (*CreatePostingResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreatePosting not implemented")
 }
 func (UnimplementedLedgerServiceServer) Authorize(context.Context, *AuthorizeRequest) (*AuthorizeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Authorize not implemented")
@@ -210,6 +232,24 @@ func _LedgerService_Transfer_Handler(srv interface{}, ctx context.Context, dec f
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(LedgerServiceServer).Transfer(ctx, req.(*TransferRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _LedgerService_CreatePosting_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreatePostingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LedgerServiceServer).CreatePosting(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LedgerService_CreatePosting_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LedgerServiceServer).CreatePosting(ctx, req.(*CreatePostingRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -314,6 +354,10 @@ var LedgerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Transfer",
 			Handler:    _LedgerService_Transfer_Handler,
+		},
+		{
+			MethodName: "CreatePosting",
+			Handler:    _LedgerService_CreatePosting_Handler,
 		},
 		{
 			MethodName: "Authorize",

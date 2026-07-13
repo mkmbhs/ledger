@@ -73,59 +73,48 @@ func (s *MemStore) GetTransfer(_ context.Context, id string) (Transfer, bool, er
 	return t, ok, nil
 }
 
-// ApplyTransfer is the critical section. Holding the mutex for the whole
+// ApplyPosting is the critical section. Holding the mutex for the whole
 // operation makes it atomic and serializable: no lost updates, no double-spend,
-// and idempotency is enforced without races.
-func (s *MemStore) ApplyTransfer(_ context.Context, req TransferRequest) (Transfer, error) {
+// and idempotency is enforced without races. A two-party transfer arrives here
+// as the two-leg case; a fee split or settlement as three or more legs.
+func (s *MemStore) ApplyPosting(_ context.Context, req PostRequest) (Transfer, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	// Idempotency: a repeated key returns the original transfer. The same key
-	// with different parameters is a client bug and is rejected.
+	// with a different posting set is a client bug and is rejected.
 	if id, ok := s.byIdemKey[req.IdempotencyKey]; ok {
 		existing := s.transfers[id]
-		if existing.FromAccountID != req.FromAccountID ||
-			existing.ToAccountID != req.ToAccountID ||
-			existing.Amount != req.Amount {
+		if !MatchesPostings(existing.Entries, req.Postings) {
 			return Transfer{}, ErrIdempotencyConflict
 		}
 		return existing, nil
 	}
 
-	from, ok := s.accounts[req.FromAccountID]
-	if !ok {
-		return Transfer{}, ErrAccountNotFound
+	// Every account must exist and carry one shared currency: the declared
+	// req.Currency if given, otherwise the currency of the accounts themselves.
+	currency := req.Currency
+	for _, p := range req.Postings {
+		a, ok := s.accounts[p.AccountID]
+		if !ok {
+			return Transfer{}, ErrAccountNotFound
+		}
+		if currency == "" {
+			currency = a.Currency
+		}
+		if a.Currency != currency {
+			return Transfer{}, ErrCurrencyMismatch
+		}
 	}
-	to, ok := s.accounts[req.ToAccountID]
-	if !ok {
-		return Transfer{}, ErrAccountNotFound
-	}
-	if from.Currency != to.Currency {
-		return Transfer{}, ErrCurrencyMismatch
-	}
-	// A transfer may only spend AVAILABLE funds: money reserved by an active
-	// hold cannot be moved out from under it.
-	if from.Available() < req.Amount {
-		return Transfer{}, ErrInsufficientFunds
+	// Every debited leg may only spend AVAILABLE funds: money reserved by an
+	// active hold cannot be moved out from under it.
+	for _, p := range req.Postings {
+		if p.Amount < 0 && s.accounts[p.AccountID].Available() < -p.Amount {
+			return Transfer{}, ErrInsufficientFunds
+		}
 	}
 
-	// Build the transfer with its two balanced entries.
-	now := s.now()
-	tid := newID()
-	t := Transfer{
-		ID:             tid,
-		IdempotencyKey: req.IdempotencyKey,
-		FromAccountID:  req.FromAccountID,
-		ToAccountID:    req.ToAccountID,
-		Amount:         req.Amount,
-		Currency:       from.Currency,
-		Status:         StatusPosted,
-		CreatedAt:      now,
-		Entries: []Entry{
-			{ID: newID(), TransferID: tid, AccountID: from.ID, Amount: -req.Amount, CreatedAt: now},
-			{ID: newID(), TransferID: tid, AccountID: to.ID, Amount: req.Amount, CreatedAt: now},
-		},
-	}
+	t := NewPostedTransfer(req.IdempotencyKey, currency, req.Postings, s.now(), newID)
 
 	// Invariant: the entries of a transfer always sum to zero (money is neither
 	// created nor destroyed). Checked before any state changes so a failed write
@@ -134,14 +123,15 @@ func (s *MemStore) ApplyTransfer(_ context.Context, req TransferRequest) (Transf
 		return Transfer{}, err
 	}
 
-	// Apply the balance changes.
-	from.Balance -= req.Amount
-	to.Balance += req.Amount
-	s.accounts[from.ID] = from
-	s.accounts[to.ID] = to
+	// Apply the balance changes, one signed leg at a time.
+	for _, p := range req.Postings {
+		a := s.accounts[p.AccountID]
+		a.Balance += p.Amount
+		s.accounts[p.AccountID] = a
+	}
 
-	s.transfers[tid] = t
-	s.byIdemKey[req.IdempotencyKey] = tid
+	s.transfers[t.ID] = t
+	s.byIdemKey[req.IdempotencyKey] = t.ID
 	for _, e := range t.Entries {
 		s.entriesByAccount[e.AccountID] = append(s.entriesByAccount[e.AccountID], e)
 	}
@@ -246,23 +236,14 @@ func (s *MemStore) Capture(_ context.Context, req CaptureRequest, now time.Time)
 	from := s.accounts[h.FromAccountID]
 	to := s.accounts[h.ToAccountID]
 
-	tid := newID()
-	t := Transfer{
-		ID:             tid,
-		IdempotencyKey: req.IdempotencyKey,
-		FromAccountID:  h.FromAccountID,
-		ToAccountID:    h.ToAccountID,
-		Amount:         req.Amount,
-		Currency:       from.Currency,
-		Status:         StatusPosted,
-		CreatedAt:      now,
-		Entries: []Entry{
-			{ID: newID(), TransferID: tid, AccountID: h.FromAccountID, Amount: -req.Amount, CreatedAt: now},
-			{ID: newID(), TransferID: tid, AccountID: h.ToAccountID, Amount: req.Amount, CreatedAt: now},
-		},
-	}
+	// A capture settles as a two-leg posting: debit the source, credit the
+	// destination. Captures stay two-leg by design (see README Limitations).
+	t := NewPostedTransfer(req.IdempotencyKey, from.Currency, []Posting{
+		{AccountID: h.FromAccountID, Amount: -req.Amount},
+		{AccountID: h.ToAccountID, Amount: req.Amount},
+	}, now, newID)
 
-	// Same invariant as ApplyTransfer: a capture writes entries, so they must
+	// Same invariant as ApplyPosting: a capture writes entries, so they must
 	// balance before any state changes.
 	if err := AssertBalanced(t.Entries); err != nil {
 		return Transfer{}, err
@@ -274,15 +255,15 @@ func (s *MemStore) Capture(_ context.Context, req CaptureRequest, now time.Time)
 	s.accounts[from.ID] = from
 	s.accounts[to.ID] = to
 
-	s.transfers[tid] = t
+	s.transfers[t.ID] = t
 	for _, e := range t.Entries {
 		s.entriesByAccount[e.AccountID] = append(s.entriesByAccount[e.AccountID], e)
 	}
-	s.captureByKey[req.IdempotencyKey] = tid
+	s.captureByKey[req.IdempotencyKey] = t.ID
 
 	h.Status = HoldCaptured
 	h.Captured = req.Amount
-	h.CaptureTransferID = tid
+	h.CaptureTransferID = t.ID
 	s.holds[h.ID] = h
 	return t, nil
 }

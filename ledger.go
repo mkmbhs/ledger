@@ -1,9 +1,9 @@
 // Package ledger implements a double-entry ledger with idempotent money movement.
 //
-// Design in one line: every transfer produces two balanced entries (a debit and
-// a credit that sum to zero), money is never created or destroyed, and applying
-// the same request twice (same idempotency key) has the same effect as applying
-// it once.
+// Design in one line: every transfer posts balanced entries that sum to zero
+// (a two-party transfer is one debit and one credit; a multi-leg posting is any
+// balanced set), money is never created or destroyed, and applying the same
+// request twice (same idempotency key) has the same effect as applying it once.
 package ledger
 
 import (
@@ -35,9 +35,9 @@ type Account struct {
 // Available returns the spendable balance: settled funds minus active holds.
 func (a Account) Available() Money { return a.Balance - a.Held }
 
-// Entry is one side of a transfer posted against a single account. Amount is
+// Entry is one leg of a transfer posted against a single account. Amount is
 // signed: negative for a debit (money leaving), positive for a credit (money
-// arriving). The two entries of a transfer always sum to zero.
+// arriving). A transfer's entries always sum to zero.
 type Entry struct {
 	ID         string
 	TransferID string
@@ -73,7 +73,10 @@ const (
 	StatusPosted TransferStatus = "posted"
 )
 
-// Transfer is an atomic, balanced movement of money from one account to another.
+// Transfer is an atomic, balanced movement of money: its entries — one per
+// posted leg — always sum to zero. FromAccountID, ToAccountID, and Amount are
+// a readability summary populated only for the two-leg case (one debit, one
+// credit); for larger postings they are empty and the Entries are the record.
 type Transfer struct {
 	ID             string
 	IdempotencyKey string
@@ -95,6 +98,73 @@ type TransferRequest struct {
 	FromAccountID  string
 	ToAccountID    string
 	Amount         Money
+}
+
+// Posting is one signed leg of a multi-leg posting: a negative Amount debits
+// the account, a positive Amount credits it. A valid posting set has at least
+// two legs, no zero amounts, no repeated accounts, and sums to zero.
+type Posting struct {
+	AccountID string
+	Amount    Money
+}
+
+// PostRequest is the input to apply a multi-leg posting — the general form of
+// money movement (a fee split, a settlement: one debit and many credits, or
+// any balanced combination). Currency, if set, must match every posted
+// account; left empty, it is taken from the accounts, which must all agree.
+// Safe to retry on IdempotencyKey exactly like a transfer.
+type PostRequest struct {
+	IdempotencyKey string
+	Currency       string
+	Postings       []Posting
+}
+
+// MatchesPostings reports whether a transfer's entries record exactly the
+// given posting set (same accounts, same signed amounts, order ignored).
+// Stores use it to distinguish an idempotent replay from a key reused with
+// different parameters.
+func MatchesPostings(entries []Entry, postings []Posting) bool {
+	if len(entries) != len(postings) {
+		return false
+	}
+	byAccount := make(map[string]Money, len(entries))
+	for _, e := range entries {
+		byAccount[e.AccountID] = e.Amount
+	}
+	for _, p := range postings {
+		if amt, ok := byAccount[p.AccountID]; !ok || amt != p.Amount {
+			return false
+		}
+	}
+	return true
+}
+
+// NewPostedTransfer assembles the Transfer record for a balanced posting set:
+// one signed entry per posting, in request order, plus the two-leg
+// From/To/Amount summary when the set is exactly one debit and one credit.
+// newID supplies the transfer and entry ids. Both bundled stores build their
+// transfers through this one constructor, so their records are identical.
+func NewPostedTransfer(key, currency string, postings []Posting, createdAt time.Time, newID func() string) Transfer {
+	tid := newID()
+	t := Transfer{
+		ID:             tid,
+		IdempotencyKey: key,
+		Currency:       currency,
+		Status:         StatusPosted,
+		CreatedAt:      createdAt,
+		Entries:        make([]Entry, len(postings)),
+	}
+	for i, p := range postings {
+		t.Entries[i] = Entry{ID: newID(), TransferID: tid, AccountID: p.AccountID, Amount: p.Amount, CreatedAt: createdAt}
+	}
+	if len(postings) == 2 {
+		debit, credit := postings[0], postings[1]
+		if debit.Amount > 0 {
+			debit, credit = credit, debit
+		}
+		t.FromAccountID, t.ToAccountID, t.Amount = debit.AccountID, credit.AccountID, credit.Amount
+	}
+	return t
 }
 
 // HoldStatus is the lifecycle state of an authorization hold.
@@ -153,6 +223,10 @@ var (
 	ErrCurrencyMismatch      = errors.New("ledger: account currencies do not match")
 	ErrInsufficientFunds     = errors.New("ledger: insufficient funds")
 	ErrIdempotencyConflict   = errors.New("ledger: idempotency key reused with different parameters")
+	ErrTooFewPostings        = errors.New("ledger: a posting needs at least two legs")
+	ErrZeroPosting           = errors.New("ledger: posting amounts must be non-zero")
+	ErrDuplicateAccount      = errors.New("ledger: postings must not repeat an account")
+	ErrUnbalancedPostings    = errors.New("ledger: postings must sum to zero")
 	ErrHoldNotFound          = errors.New("ledger: hold not found")
 	ErrHoldNotActive         = errors.New("ledger: hold is not active")
 	ErrHoldExpired           = errors.New("ledger: hold has expired")

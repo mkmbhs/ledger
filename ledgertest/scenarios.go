@@ -24,6 +24,12 @@ func Scenarios() []Scenario {
 		{"transfer/insufficient-funds", scenarioTransferInsufficientFunds},
 		{"transfer/unknown-account-and-currency-mismatch", scenarioTransferValidation},
 		{"transfer/cannot-spend-held-funds", scenarioTransferCannotSpendHeldFunds},
+		{"posting/three-leg-fee-split", scenarioPostingFeeSplit},
+		{"posting/unbalanced-rejected", scenarioPostingUnbalancedRejected},
+		{"posting/single-leg-rejected", scenarioPostingSingleLegRejected},
+		{"posting/idempotent-replay-and-conflict", scenarioPostingIdempotentReplay},
+		{"posting/concurrent-conservation", scenarioPostingConcurrentConservation},
+		{"posting/multi-debit-insufficient-funds", scenarioPostingMultiDebitInsufficientFunds},
 		{"account/create-idempotent", scenarioCreateAccountIdempotent},
 		{"account/entries-reconciliation", scenarioEntriesReconciliation},
 		{"hold/authorize-reserves-without-moving", scenarioAuthorizeReservesWithoutMoving},
@@ -102,9 +108,19 @@ func getAccount(t *testing.T, s ledger.Store, id string) ledger.Account {
 }
 
 func transfer(s ledger.Store, key, from, to string, amt ledger.Money) (ledger.Transfer, error) {
-	return s.ApplyTransfer(context.Background(), ledger.TransferRequest{
-		IdempotencyKey: key, FromAccountID: from, ToAccountID: to, Amount: amt,
-	})
+	return s.ApplyPosting(context.Background(), twoLeg(key, from, to, amt))
+}
+
+// twoLeg builds the two-leg posting a Service.Transfer produces: one debit and
+// one matching credit.
+func twoLeg(key, from, to string, amt ledger.Money) ledger.PostRequest {
+	return ledger.PostRequest{
+		IdempotencyKey: key,
+		Postings: []ledger.Posting{
+			{AccountID: from, Amount: -amt},
+			{AccountID: to, Amount: amt},
+		},
+	}
 }
 
 func authorize(t *testing.T, s ledger.Store, key, from, to string, amt ledger.Money, ttl time.Duration, now time.Time) ledger.Hold {
@@ -160,12 +176,12 @@ var scenarioTransferIdempotentReplay = sc(func(t *testing.T, s ledger.Store) {
 	createAccount(t, s, "alice", "USD", 1000)
 	createAccount(t, s, "bob", "USD", 0)
 
-	req := ledger.TransferRequest{IdempotencyKey: "same", FromAccountID: "alice", ToAccountID: "bob", Amount: 100}
-	first, err := s.ApplyTransfer(context.Background(), req)
+	req := twoLeg("same", "alice", "bob", 100)
+	first, err := s.ApplyPosting(context.Background(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := s.ApplyTransfer(context.Background(), req)
+	second, err := s.ApplyPosting(context.Background(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +217,7 @@ var scenarioTransferConcurrentSameKey = sc(func(t *testing.T, s ledger.Store) {
 	createAccount(t, s, "bob", "USD", 0)
 
 	const n = 64
-	req := ledger.TransferRequest{IdempotencyKey: "retry", FromAccountID: "alice", ToAccountID: "bob", Amount: 100}
+	req := twoLeg("retry", "alice", "bob", 100)
 
 	var wg sync.WaitGroup
 	ids := make([]string, n)
@@ -210,7 +226,7 @@ var scenarioTransferConcurrentSameKey = sc(func(t *testing.T, s ledger.Store) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			tr, err := s.ApplyTransfer(context.Background(), req)
+			tr, err := s.ApplyPosting(context.Background(), req)
 			ids[i], errs[i] = tr.ID, err
 		}(i)
 	}
@@ -313,6 +329,196 @@ var scenarioTransferCannotSpendHeldFunds = sc(func(t *testing.T, s ledger.Store)
 		t.Errorf("alice balance=%d held=%d available=%d, want 800/800/0", a.Balance, a.Held, a.Available())
 	}
 	AssertInvariants(t, s, map[string]ledger.Money{"alice": 1000, "bob": 0})
+})
+
+// --- posting scenarios ----------------------------------------------------------
+
+// scenarioPostingFeeSplit: one debit funds several credits atomically — the
+// classic fee split — and the two-leg summary fields stay empty: the entries
+// are the record.
+var scenarioPostingFeeSplit = sc(func(t *testing.T, s ledger.Store) {
+	createAccount(t, s, "alice", "USD", 1000)
+	createAccount(t, s, "merchant", "USD", 0)
+	createAccount(t, s, "fees", "USD", 0)
+
+	tr, err := s.ApplyPosting(context.Background(), ledger.PostRequest{
+		IdempotencyKey: "split",
+		Postings: []ledger.Posting{
+			{AccountID: "alice", Amount: -100},
+			{AccountID: "merchant", Amount: 97},
+			{AccountID: "fees", Amount: 3},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ApplyPosting: %v", err)
+	}
+	if len(tr.Entries) != 3 {
+		t.Errorf("entries = %d, want 3", len(tr.Entries))
+	}
+	if tr.FromAccountID != "" || tr.ToAccountID != "" || tr.Amount != 0 {
+		t.Errorf("two-leg summary populated on a 3-leg posting: from=%q to=%q amount=%d",
+			tr.FromAccountID, tr.ToAccountID, tr.Amount)
+	}
+	if a := getAccount(t, s, "alice"); a.Balance != 900 {
+		t.Errorf("alice = %d, want 900", a.Balance)
+	}
+	if m := getAccount(t, s, "merchant"); m.Balance != 97 {
+		t.Errorf("merchant = %d, want 97", m.Balance)
+	}
+	if f := getAccount(t, s, "fees"); f.Balance != 3 {
+		t.Errorf("fees = %d, want 3", f.Balance)
+	}
+	AssertInvariants(t, s, map[string]ledger.Money{"alice": 1000, "merchant": 0, "fees": 0})
+})
+
+// scenarioPostingUnbalancedRejected: a store must refuse a posting set that
+// does not sum to zero — even though the Service already validates this, the
+// store is the last line of defense — and leave no trace of the attempt.
+var scenarioPostingUnbalancedRejected = sc(func(t *testing.T, s ledger.Store) {
+	createAccount(t, s, "alice", "USD", 1000)
+	createAccount(t, s, "bob", "USD", 0)
+
+	if _, err := s.ApplyPosting(context.Background(), ledger.PostRequest{
+		IdempotencyKey: "bad",
+		Postings: []ledger.Posting{
+			{AccountID: "alice", Amount: -100},
+			{AccountID: "bob", Amount: 90}, // 10 units would vanish
+		},
+	}); err == nil {
+		t.Fatal("store accepted an unbalanced posting set")
+	}
+	if a := getAccount(t, s, "alice"); a.Balance != 1000 {
+		t.Errorf("alice = %d, want 1000 (unchanged after refused write)", a.Balance)
+	}
+	AssertInvariants(t, s, map[string]ledger.Money{"alice": 1000, "bob": 0})
+})
+
+// scenarioPostingSingleLegRejected: a single-leg posting can never balance and
+// must be refused with no state change.
+var scenarioPostingSingleLegRejected = sc(func(t *testing.T, s ledger.Store) {
+	createAccount(t, s, "alice", "USD", 1000)
+
+	if _, err := s.ApplyPosting(context.Background(), ledger.PostRequest{
+		IdempotencyKey: "solo",
+		Postings:       []ledger.Posting{{AccountID: "alice", Amount: 100}},
+	}); err == nil {
+		t.Fatal("store accepted a single-leg posting")
+	}
+	if a := getAccount(t, s, "alice"); a.Balance != 1000 {
+		t.Errorf("alice = %d, want 1000 (unchanged after refused write)", a.Balance)
+	}
+	AssertInvariants(t, s, map[string]ledger.Money{"alice": 1000})
+})
+
+// scenarioPostingIdempotentReplay: an n-leg replay returns the original
+// transfer and applies once; the same key with a different posting set is
+// rejected.
+var scenarioPostingIdempotentReplay = sc(func(t *testing.T, s ledger.Store) {
+	createAccount(t, s, "alice", "USD", 1000)
+	createAccount(t, s, "merchant", "USD", 0)
+	createAccount(t, s, "fees", "USD", 0)
+
+	req := ledger.PostRequest{
+		IdempotencyKey: "split",
+		Postings: []ledger.Posting{
+			{AccountID: "alice", Amount: -200},
+			{AccountID: "merchant", Amount: 190},
+			{AccountID: "fees", Amount: 10},
+		},
+	}
+	first, err := s.ApplyPosting(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.ApplyPosting(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID != second.ID {
+		t.Errorf("idempotent replay produced a different transfer: %s vs %s", first.ID, second.ID)
+	}
+	if a := getAccount(t, s, "alice"); a.Balance != 800 {
+		t.Errorf("alice = %d, want 800 (applied once)", a.Balance)
+	}
+
+	// Same key, different split -> conflict, nothing applied.
+	if _, err := s.ApplyPosting(context.Background(), ledger.PostRequest{
+		IdempotencyKey: "split",
+		Postings: []ledger.Posting{
+			{AccountID: "alice", Amount: -200},
+			{AccountID: "merchant", Amount: 180},
+			{AccountID: "fees", Amount: 20},
+		},
+	}); !errors.Is(err, ledger.ErrIdempotencyConflict) {
+		t.Errorf("err = %v, want ErrIdempotencyConflict", err)
+	}
+	AssertInvariants(t, s, map[string]ledger.Money{"alice": 1000, "merchant": 0, "fees": 0})
+})
+
+// scenarioPostingConcurrentConservation: concurrent multi-leg postings across a
+// ring of accounts conserve the total exactly, with the sorted lock order (or
+// equivalent) preventing deadlocks between overlapping account sets.
+var scenarioPostingConcurrentConservation = sc(func(t *testing.T, s ledger.Store) {
+	const accounts = 6
+	const opening ledger.Money = 1000
+	openings := make(map[string]ledger.Money, accounts)
+	for i := range accounts {
+		id := fmt.Sprintf("acc-%d", i)
+		createAccount(t, s, id, "USD", opening)
+		openings[id] = opening
+	}
+
+	var wg sync.WaitGroup
+	const rounds = 100
+	for i := range rounds {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			// A 3-leg split whose account set overlaps its neighbors', in both
+			// directions; ErrInsufficientFunds is a valid, conserving outcome.
+			_, _ = s.ApplyPosting(context.Background(), ledger.PostRequest{
+				IdempotencyKey: fmt.Sprintf("p-%d", i),
+				Postings: []ledger.Posting{
+					{AccountID: fmt.Sprintf("acc-%d", i%accounts), Amount: -2},
+					{AccountID: fmt.Sprintf("acc-%d", (i+1)%accounts), Amount: 1},
+					{AccountID: fmt.Sprintf("acc-%d", (i+2)%accounts), Amount: 1},
+				},
+			})
+		}(i)
+	}
+	wg.Wait()
+
+	AssertInvariants(t, s, openings)
+})
+
+// scenarioPostingMultiDebitInsufficientFunds: a posting debiting several
+// accounts is all-or-nothing — if ONE debited account lacks available funds,
+// no account moves at all.
+var scenarioPostingMultiDebitInsufficientFunds = sc(func(t *testing.T, s ledger.Store) {
+	createAccount(t, s, "alice", "USD", 50) // cannot cover its 100 leg
+	createAccount(t, s, "bob", "USD", 1000)
+	createAccount(t, s, "carol", "USD", 0)
+
+	if _, err := s.ApplyPosting(context.Background(), ledger.PostRequest{
+		IdempotencyKey: "md",
+		Postings: []ledger.Posting{
+			{AccountID: "alice", Amount: -100},
+			{AccountID: "bob", Amount: -50},
+			{AccountID: "carol", Amount: 150},
+		},
+	}); !errors.Is(err, ledger.ErrInsufficientFunds) {
+		t.Errorf("err = %v, want ErrInsufficientFunds", err)
+	}
+	if a := getAccount(t, s, "alice"); a.Balance != 50 {
+		t.Errorf("alice = %d, want 50 (untouched)", a.Balance)
+	}
+	if b := getAccount(t, s, "bob"); b.Balance != 1000 {
+		t.Errorf("bob = %d, want 1000 (the covered debit must not apply alone)", b.Balance)
+	}
+	if c := getAccount(t, s, "carol"); c.Balance != 0 {
+		t.Errorf("carol = %d, want 0", c.Balance)
+	}
+	AssertInvariants(t, s, map[string]ledger.Money{"alice": 50, "bob": 1000, "carol": 0})
 })
 
 // --- account scenarios ----------------------------------------------------------

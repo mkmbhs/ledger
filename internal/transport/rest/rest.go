@@ -18,6 +18,7 @@ func NewHandler(svc *ledger.Service) http.Handler {
 	h := &handler{svc: svc}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/transfers", h.createTransfer)
+	mux.HandleFunc("POST /v1/postings", h.createPosting)
 	mux.HandleFunc("POST /v1/holds", h.createHold)
 	mux.HandleFunc("POST /v1/holds/{id}/capture", h.captureHold)
 	mux.HandleFunc("POST /v1/holds/{id}/void", h.voidHold)
@@ -47,6 +48,30 @@ func (h *handler) createTransfer(w http.ResponseWriter, r *http.Request) {
 		ToAccountID:    body.ToAccountID,
 		Amount:         ledger.Money(body.Amount),
 	})
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"transfer": toTransferDTO(t)})
+}
+
+func (h *handler) createPosting(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IdempotencyKey string `json:"idempotency_key"`
+		Currency       string `json:"currency"`
+		Postings       []struct {
+			AccountID string `json:"account_id"`
+			Amount    int64  `json:"amount"` // signed: negative debits, positive credits
+		} `json:"postings"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	req := ledger.PostRequest{IdempotencyKey: body.IdempotencyKey, Currency: body.Currency}
+	for _, p := range body.Postings {
+		req.Postings = append(req.Postings, ledger.Posting{AccountID: p.AccountID, Amount: ledger.Money(p.Amount)})
+	}
+	t, err := h.svc.Post(r.Context(), req)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -210,6 +235,14 @@ func statusForError(err error) (int, string) {
 		return http.StatusBadRequest, "missing_idempotency_key"
 	case errors.Is(err, ledger.ErrCurrencyMismatch):
 		return http.StatusBadRequest, "currency_mismatch"
+	case errors.Is(err, ledger.ErrTooFewPostings):
+		return http.StatusBadRequest, "too_few_postings"
+	case errors.Is(err, ledger.ErrZeroPosting):
+		return http.StatusBadRequest, "zero_posting"
+	case errors.Is(err, ledger.ErrDuplicateAccount):
+		return http.StatusBadRequest, "duplicate_account"
+	case errors.Is(err, ledger.ErrUnbalancedPostings):
+		return http.StatusBadRequest, "unbalanced_postings"
 	case errors.Is(err, ledger.ErrInsufficientFunds):
 		return http.StatusBadRequest, "insufficient_funds"
 	case errors.Is(err, ledger.ErrCaptureExceedsHold):

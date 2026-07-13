@@ -21,6 +21,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"sort"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -191,27 +192,28 @@ func lockAccount(ctx context.Context, tx pgx.Tx, id string) (ledger.Account, err
 		`SELECT id, currency, balance, held FROM accounts WHERE id = $1 FOR UPDATE`, id))
 }
 
-// lockAccounts locks the two account rows FOR UPDATE in a deterministic order —
-// the lexicographically smaller id first.
+// lockAccounts locks every given account row FOR UPDATE in a deterministic
+// order — lexicographically sorted ids — and returns the accounts keyed by id.
 //
-// This ordering is the deadlock guard. Two concurrent transfers in opposite
-// directions (A->B and B->A) would otherwise each grab one row lock and then
-// block forever waiting for the other's. Forcing every transaction to acquire the
-// locks in the same (sorted) order means they serialize instead of deadlocking.
-// It returns the accounts keyed back to (fromID, toID) regardless of lock order.
-func lockAccounts(ctx context.Context, tx pgx.Tx, fromID, toID string) (from, to ledger.Account, err error) {
-	first, second := fromID, toID
-	if first > second {
-		first, second = second, first
+// The sorted order is the deadlock guard, and it generalizes unchanged from
+// two accounts to n: any two concurrent postings whose account sets overlap
+// (in any direction, with any leg count) acquire the locks they share in the
+// same order, so one always serializes behind the other instead of each
+// grabbing half and waiting forever for the rest.
+func lockAccounts(ctx context.Context, tx pgx.Tx, ids []string) (map[string]ledger.Account, error) {
+	sorted := make([]string, len(ids))
+	copy(sorted, ids)
+	sort.Strings(sorted)
+	out := make(map[string]ledger.Account, len(sorted))
+	for _, id := range sorted {
+		if _, ok := out[id]; ok {
+			continue // already locked (defensive; valid postings never repeat)
+		}
+		a, err := lockAccount(ctx, tx, id)
+		if err != nil {
+			return nil, err
+		}
+		out[id] = a
 	}
-	a1, err := lockAccount(ctx, tx, first)
-	if err != nil {
-		return from, to, err
-	}
-	a2, err := lockAccount(ctx, tx, second)
-	if err != nil {
-		return from, to, err
-	}
-	byID := map[string]ledger.Account{a1.ID: a1, a2.ID: a2}
-	return byID[fromID], byID[toID], nil
+	return out, nil
 }

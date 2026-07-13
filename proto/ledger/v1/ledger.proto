@@ -17,6 +17,11 @@ service LedgerService {
   // with the same idempotency_key: the transfer is applied at most once.
   rpc Transfer(TransferRequest) returns (TransferResponse);
 
+  // CreatePosting atomically applies a balanced multi-leg posting: two or more
+  // signed legs that sum to zero (a fee split, a settlement). Safe to retry
+  // with the same idempotency_key.
+  rpc CreatePosting(CreatePostingRequest) returns (CreatePostingResponse);
+
   // Authorize reserves funds in the source account (an authorization hold),
   // reducing its available balance without moving money.
   rpc Authorize(AuthorizeRequest) returns (AuthorizeResponse);
@@ -61,9 +66,9 @@ message Account {
   int64 available = 5; // spendable: balance - held
 }
 
-// Entry is one side of a transfer posted against a single account. amount is
-// signed: negative for a debit, positive for a credit. The two entries of a
-// transfer always sum to zero.
+// Entry is one leg of a transfer posted against a single account. amount is
+// signed: negative for a debit, positive for a credit. A transfer's entries
+// always sum to zero.
 message Entry {
   string id = 1;
   string transfer_id = 2;
@@ -72,7 +77,10 @@ message Entry {
   google.protobuf.Timestamp created_at = 5;
 }
 
-// Transfer is an atomic, balanced movement of money between two accounts.
+// Transfer is an atomic, balanced movement of money: its entries always sum to
+// zero. from_account_id, to_account_id, and amount are a readability summary
+// populated only for two-leg transfers; multi-leg postings leave them empty
+// and the entries are the record.
 message Transfer {
   string id = 1;
   string idempotency_key = 2;
@@ -110,6 +118,27 @@ message TransferRequest {
 }
 
 message TransferResponse {
+  Transfer transfer = 1;
+}
+
+// Posting is one signed leg of a multi-leg posting: a negative amount debits
+// the account, a positive amount credits it.
+message Posting {
+  string account_id = 1;
+  int64 amount = 2;
+}
+
+// CreatePostingRequest applies a balanced multi-leg posting: at least two
+// legs, no zero amounts, no repeated accounts, summing to zero. currency, if
+// set, must match every posted account; left empty, it is taken from the
+// accounts, which must all agree.
+message CreatePostingRequest {
+  string idempotency_key = 1;
+  string currency = 2;
+  repeated Posting postings = 3;
+}
+
+message CreatePostingResponse {
   Transfer transfer = 1;
 }
 

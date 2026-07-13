@@ -19,8 +19,9 @@ func New(store Store) *Service {
 	return &Service{store: store, now: time.Now}
 }
 
-// Transfer validates the request and applies it through the Store. It is safe to
-// retry with the same IdempotencyKey: the transfer is applied at most once.
+// Transfer validates the request and applies it as the two-leg special case of
+// a posting: one debit and one matching credit. It is safe to retry with the
+// same IdempotencyKey: the transfer is applied at most once.
 func (s *Service) Transfer(ctx context.Context, req TransferRequest) (Transfer, error) {
 	if req.Amount <= 0 {
 		return Transfer{}, ErrInvalidAmount
@@ -31,7 +32,42 @@ func (s *Service) Transfer(ctx context.Context, req TransferRequest) (Transfer, 
 	if req.IdempotencyKey == "" {
 		return Transfer{}, ErrMissingIdempotencyKey
 	}
-	return s.store.ApplyTransfer(ctx, req)
+	return s.store.ApplyPosting(ctx, PostRequest{
+		IdempotencyKey: req.IdempotencyKey,
+		Postings: []Posting{
+			{AccountID: req.FromAccountID, Amount: -req.Amount},
+			{AccountID: req.ToAccountID, Amount: req.Amount},
+		},
+	})
+}
+
+// Post validates a multi-leg posting and applies it through the Store: at
+// least two legs, every amount non-zero, no account repeated, and the signed
+// amounts summing to zero — money moves, it is never created. Safe to retry
+// with the same IdempotencyKey: the posting is applied at most once.
+func (s *Service) Post(ctx context.Context, req PostRequest) (Transfer, error) {
+	if req.IdempotencyKey == "" {
+		return Transfer{}, ErrMissingIdempotencyKey
+	}
+	if len(req.Postings) < 2 {
+		return Transfer{}, ErrTooFewPostings
+	}
+	seen := make(map[string]bool, len(req.Postings))
+	var sum Money
+	for _, p := range req.Postings {
+		if p.Amount == 0 {
+			return Transfer{}, ErrZeroPosting
+		}
+		if seen[p.AccountID] {
+			return Transfer{}, ErrDuplicateAccount
+		}
+		seen[p.AccountID] = true
+		sum += p.Amount
+	}
+	if sum != 0 {
+		return Transfer{}, ErrUnbalancedPostings
+	}
+	return s.store.ApplyPosting(ctx, req)
 }
 
 // AccountHistory returns every entry posted against an account, oldest first.

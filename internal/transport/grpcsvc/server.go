@@ -45,6 +45,24 @@ func (s *Server) Transfer(ctx context.Context, req *ledgerv1.TransferRequest) (*
 	return &ledgerv1.TransferResponse{Transfer: transferToProto(t)}, nil
 }
 
+func (s *Server) CreatePosting(ctx context.Context, req *ledgerv1.CreatePostingRequest) (*ledgerv1.CreatePostingResponse, error) {
+	post := ledger.PostRequest{
+		IdempotencyKey: req.GetIdempotencyKey(),
+		Currency:       req.GetCurrency(),
+	}
+	for _, p := range req.GetPostings() {
+		post.Postings = append(post.Postings, ledger.Posting{
+			AccountID: p.GetAccountId(),
+			Amount:    ledger.Money(p.GetAmount()),
+		})
+	}
+	t, err := s.svc.Post(ctx, post)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &ledgerv1.CreatePostingResponse{Transfer: transferToProto(t)}, nil
+}
+
 func (s *Server) Authorize(ctx context.Context, req *ledgerv1.AuthorizeRequest) (*ledgerv1.AuthorizeResponse, error) {
 	h, err := s.svc.Authorize(ctx, ledger.AuthorizeRequest{
 		IdempotencyKey: req.GetIdempotencyKey(),
@@ -116,7 +134,11 @@ func toStatus(err error) error {
 	case errors.Is(err, ledger.ErrInvalidAmount),
 		errors.Is(err, ledger.ErrSameAccount),
 		errors.Is(err, ledger.ErrMissingIdempotencyKey),
-		errors.Is(err, ledger.ErrCurrencyMismatch):
+		errors.Is(err, ledger.ErrCurrencyMismatch),
+		errors.Is(err, ledger.ErrTooFewPostings),
+		errors.Is(err, ledger.ErrZeroPosting),
+		errors.Is(err, ledger.ErrDuplicateAccount),
+		errors.Is(err, ledger.ErrUnbalancedPostings):
 		return status.Error(codes.InvalidArgument, err.Error())
 	case errors.Is(err, ledger.ErrInsufficientFunds),
 		errors.Is(err, ledger.ErrCaptureExceedsHold),

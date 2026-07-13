@@ -249,3 +249,52 @@ func TestCreateAccount_Conflict(t *testing.T) {
 		t.Errorf("error code = %q, want account_exists", errResp.Code)
 	}
 }
+
+// TestCreatePosting exercises the multi-leg REST surface: a three-leg fee
+// split lands atomically, and an unbalanced set maps to 400
+// unbalanced_postings.
+func TestCreatePosting(t *testing.T) {
+	srv := newServer(t)
+	createAccount(t, srv.URL, "alice", "USD", 1000)
+	createAccount(t, srv.URL, "merchant", "USD", 0)
+	createAccount(t, srv.URL, "fees", "USD", 0)
+
+	var resp struct {
+		Transfer transferDTO `json:"transfer"`
+	}
+	code := do(t, http.MethodPost, srv.URL+"/v1/postings", map[string]any{
+		"idempotency_key": "split",
+		"postings": []map[string]any{
+			{"account_id": "alice", "amount": -100},
+			{"account_id": "merchant", "amount": 97},
+			{"account_id": "fees", "amount": 3},
+		},
+	}, &resp)
+	if code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201", code)
+	}
+	if len(resp.Transfer.Entries) != 3 {
+		t.Errorf("entries = %d, want 3", len(resp.Transfer.Entries))
+	}
+	if resp.Transfer.FromAccountID != "" || resp.Transfer.Amount != 0 {
+		t.Errorf("two-leg summary populated on 3-leg posting: %+v", resp.Transfer)
+	}
+
+	var acct accountDTO
+	do(t, http.MethodGet, srv.URL+"/v1/accounts/merchant", nil, &acct)
+	if acct.Balance != 97 {
+		t.Errorf("merchant balance = %d, want 97", acct.Balance)
+	}
+
+	var errResp errorBody
+	code = do(t, http.MethodPost, srv.URL+"/v1/postings", map[string]any{
+		"idempotency_key": "bad",
+		"postings": []map[string]any{
+			{"account_id": "alice", "amount": -100},
+			{"account_id": "merchant", "amount": 90},
+		},
+	}, &errResp)
+	if code != http.StatusBadRequest || errResp.Code != "unbalanced_postings" {
+		t.Errorf("unbalanced: status=%d code=%q, want 400 unbalanced_postings", code, errResp.Code)
+	}
+}

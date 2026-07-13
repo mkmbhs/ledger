@@ -6,7 +6,7 @@ import (
 )
 
 // Store is the persistence boundary for the ledger. Implementations own the
-// transaction and concurrency guarantees: ApplyTransfer must be atomic (all of
+// transaction and concurrency guarantees: ApplyPosting must be atomic (all of
 // the balance changes, entries, and the transfer record commit together or not
 // at all) and idempotent (a repeated IdempotencyKey returns the original
 // transfer without applying it a second time).
@@ -14,8 +14,8 @@ import (
 // Two implementations exist:
 //   - MemStore: an in-memory reference implementation used by the unit tests,
 //     correct under concurrency via a single mutex.
-//   - (M2) a PostgreSQL implementation using SELECT ... FOR UPDATE and a
-//     unique constraint on the idempotency key inside a single SQL transaction.
+//   - postgres.Store: a PostgreSQL implementation using SELECT ... FOR UPDATE
+//     and a unique constraint on the idempotency key inside one transaction.
 type Store interface {
 	// CreateAccount registers an account. Used for setup. Idempotent:
 	// re-creating an account with identical attributes is a no-op; re-creating
@@ -26,11 +26,14 @@ type Store interface {
 	// GetAccount returns an account by ID, or ErrAccountNotFound.
 	GetAccount(ctx context.Context, id string) (Account, error)
 
-	// ApplyTransfer atomically and idempotently applies req. Validation of the
-	// business rules (positive amount, distinct accounts) has already happened
-	// in the Service; the Store enforces atomicity, currency match, sufficient
-	// funds, and idempotency.
-	ApplyTransfer(ctx context.Context, req TransferRequest) (Transfer, error)
+	// ApplyPosting atomically and idempotently applies a balanced multi-leg
+	// posting (a two-party transfer is the two-leg case). Validation of the
+	// request's shape (>= 2 legs, non-zero amounts, no repeated accounts, zero
+	// sum) has already happened in the Service; the Store enforces atomicity
+	// across all legs, currency agreement, sufficient available funds on every
+	// debited account, idempotency — and, as defense in depth, refuses to write
+	// entries that do not balance.
+	ApplyPosting(ctx context.Context, req PostRequest) (Transfer, error)
 
 	// GetTransfer returns a transfer by ID, or false if it does not exist.
 	GetTransfer(ctx context.Context, id string) (Transfer, bool, error)

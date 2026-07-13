@@ -19,12 +19,13 @@ func (s *Store) Authorize(ctx context.Context, req ledger.AuthorizeRequest, now 
 	var result ledger.Hold
 	err := s.inTx(ctx, func(tx pgx.Tx) error {
 		// Lock the accounts first, then check idempotency under the lock — same
-		// reasoning as ApplyTransfer: a concurrent retry of the same key serializes
+		// reasoning as ApplyPosting: a concurrent retry of the same key serializes
 		// and reads back the original hold instead of double-reserving.
-		from, to, err := lockAccounts(ctx, tx, req.FromAccountID, req.ToAccountID)
+		accounts, err := lockAccounts(ctx, tx, []string{req.FromAccountID, req.ToAccountID})
 		if err != nil {
 			return err
 		}
+		from, to := accounts[req.FromAccountID], accounts[req.ToAccountID]
 		if existing, ok, err := readHoldByKey(ctx, tx, req.IdempotencyKey); err != nil {
 			return err
 		} else if ok {
@@ -135,11 +136,17 @@ func (s *Store) Capture(ctx context.Context, req ledger.CaptureRequest, now time
 		}
 
 		// Lock both accounts in the consistent order for the balance moves.
-		from, to, err := lockAccounts(ctx, tx, h.FromAccountID, h.ToAccountID)
+		accounts, err := lockAccounts(ctx, tx, []string{h.FromAccountID, h.ToAccountID})
 		if err != nil {
 			return err
 		}
-		t := buildTransfer(req.IdempotencyKey, h.FromAccountID, h.ToAccountID, from.Currency, req.Amount, now)
+		from, to := accounts[h.FromAccountID], accounts[h.ToAccountID]
+		// A capture settles as a two-leg posting: debit the source, credit the
+		// destination. Captures stay two-leg by design (see README Limitations).
+		t := ledger.NewPostedTransfer(req.IdempotencyKey, from.Currency, []ledger.Posting{
+			{AccountID: h.FromAccountID, Amount: -req.Amount},
+			{AccountID: h.ToAccountID, Amount: req.Amount},
+		}, now, newID)
 		// The double-entry invariant is enforced on every path that writes
 		// entries; a failure here rolls the transaction back untouched.
 		if err := ledger.AssertBalanced(t.Entries); err != nil {

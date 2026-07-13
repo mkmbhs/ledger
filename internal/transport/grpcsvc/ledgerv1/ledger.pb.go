@@ -209,9 +209,9 @@ func (x *Account) GetAvailable() int64 {
 	return 0
 }
 
-// Entry is one side of a transfer posted against a single account. amount is
-// signed: negative for a debit, positive for a credit. The two entries of a
-// transfer always sum to zero.
+// Entry is one leg of a transfer posted against a single account. amount is
+// signed: negative for a debit, positive for a credit. A transfer's entries
+// always sum to zero.
 type Entry struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -288,7 +288,10 @@ func (x *Entry) GetCreatedAt() *timestamppb.Timestamp {
 	return nil
 }
 
-// Transfer is an atomic, balanced movement of money between two accounts.
+// Transfer is an atomic, balanced movement of money: its entries always sum to
+// zero. from_account_id, to_account_id, and amount are a readability summary
+// populated only for two-leg transfers; multi-leg postings leave them empty
+// and the entries are the record.
 type Transfer struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -629,6 +632,168 @@ func (x *TransferResponse) GetTransfer() *Transfer {
 	return nil
 }
 
+// Posting is one signed leg of a multi-leg posting: a negative amount debits
+// the account, a positive amount credits it.
+type Posting struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AccountId     string                 `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	Amount        int64                  `protobuf:"varint,2,opt,name=amount,proto3" json:"amount,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Posting) Reset() {
+	*x = Posting{}
+	mi := &file_ledger_v1_ledger_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Posting) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Posting) ProtoMessage() {}
+
+func (x *Posting) ProtoReflect() protoreflect.Message {
+	mi := &file_ledger_v1_ledger_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Posting.ProtoReflect.Descriptor instead.
+func (*Posting) Descriptor() ([]byte, []int) {
+	return file_ledger_v1_ledger_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *Posting) GetAccountId() string {
+	if x != nil {
+		return x.AccountId
+	}
+	return ""
+}
+
+func (x *Posting) GetAmount() int64 {
+	if x != nil {
+		return x.Amount
+	}
+	return 0
+}
+
+// CreatePostingRequest applies a balanced multi-leg posting: at least two
+// legs, no zero amounts, no repeated accounts, summing to zero. currency, if
+// set, must match every posted account; left empty, it is taken from the
+// accounts, which must all agree.
+type CreatePostingRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	IdempotencyKey string                 `protobuf:"bytes,1,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
+	Currency       string                 `protobuf:"bytes,2,opt,name=currency,proto3" json:"currency,omitempty"`
+	Postings       []*Posting             `protobuf:"bytes,3,rep,name=postings,proto3" json:"postings,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *CreatePostingRequest) Reset() {
+	*x = CreatePostingRequest{}
+	mi := &file_ledger_v1_ledger_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreatePostingRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreatePostingRequest) ProtoMessage() {}
+
+func (x *CreatePostingRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ledger_v1_ledger_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreatePostingRequest.ProtoReflect.Descriptor instead.
+func (*CreatePostingRequest) Descriptor() ([]byte, []int) {
+	return file_ledger_v1_ledger_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *CreatePostingRequest) GetIdempotencyKey() string {
+	if x != nil {
+		return x.IdempotencyKey
+	}
+	return ""
+}
+
+func (x *CreatePostingRequest) GetCurrency() string {
+	if x != nil {
+		return x.Currency
+	}
+	return ""
+}
+
+func (x *CreatePostingRequest) GetPostings() []*Posting {
+	if x != nil {
+		return x.Postings
+	}
+	return nil
+}
+
+type CreatePostingResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Transfer      *Transfer              `protobuf:"bytes,1,opt,name=transfer,proto3" json:"transfer,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreatePostingResponse) Reset() {
+	*x = CreatePostingResponse{}
+	mi := &file_ledger_v1_ledger_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreatePostingResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreatePostingResponse) ProtoMessage() {}
+
+func (x *CreatePostingResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ledger_v1_ledger_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreatePostingResponse.ProtoReflect.Descriptor instead.
+func (*CreatePostingResponse) Descriptor() ([]byte, []int) {
+	return file_ledger_v1_ledger_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *CreatePostingResponse) GetTransfer() *Transfer {
+	if x != nil {
+		return x.Transfer
+	}
+	return nil
+}
+
 // AuthorizeRequest reserves funds. expires_in_seconds, if > 0, sets a deadline
 // after which the hold is released automatically.
 type AuthorizeRequest struct {
@@ -644,7 +809,7 @@ type AuthorizeRequest struct {
 
 func (x *AuthorizeRequest) Reset() {
 	*x = AuthorizeRequest{}
-	mi := &file_ledger_v1_ledger_proto_msgTypes[6]
+	mi := &file_ledger_v1_ledger_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -656,7 +821,7 @@ func (x *AuthorizeRequest) String() string {
 func (*AuthorizeRequest) ProtoMessage() {}
 
 func (x *AuthorizeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ledger_v1_ledger_proto_msgTypes[6]
+	mi := &file_ledger_v1_ledger_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -669,7 +834,7 @@ func (x *AuthorizeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuthorizeRequest.ProtoReflect.Descriptor instead.
 func (*AuthorizeRequest) Descriptor() ([]byte, []int) {
-	return file_ledger_v1_ledger_proto_rawDescGZIP(), []int{6}
+	return file_ledger_v1_ledger_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *AuthorizeRequest) GetIdempotencyKey() string {
@@ -716,7 +881,7 @@ type AuthorizeResponse struct {
 
 func (x *AuthorizeResponse) Reset() {
 	*x = AuthorizeResponse{}
-	mi := &file_ledger_v1_ledger_proto_msgTypes[7]
+	mi := &file_ledger_v1_ledger_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -728,7 +893,7 @@ func (x *AuthorizeResponse) String() string {
 func (*AuthorizeResponse) ProtoMessage() {}
 
 func (x *AuthorizeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ledger_v1_ledger_proto_msgTypes[7]
+	mi := &file_ledger_v1_ledger_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -741,7 +906,7 @@ func (x *AuthorizeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuthorizeResponse.ProtoReflect.Descriptor instead.
 func (*AuthorizeResponse) Descriptor() ([]byte, []int) {
-	return file_ledger_v1_ledger_proto_rawDescGZIP(), []int{7}
+	return file_ledger_v1_ledger_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *AuthorizeResponse) GetHold() *Hold {
@@ -764,7 +929,7 @@ type CaptureRequest struct {
 
 func (x *CaptureRequest) Reset() {
 	*x = CaptureRequest{}
-	mi := &file_ledger_v1_ledger_proto_msgTypes[8]
+	mi := &file_ledger_v1_ledger_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -776,7 +941,7 @@ func (x *CaptureRequest) String() string {
 func (*CaptureRequest) ProtoMessage() {}
 
 func (x *CaptureRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ledger_v1_ledger_proto_msgTypes[8]
+	mi := &file_ledger_v1_ledger_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -789,7 +954,7 @@ func (x *CaptureRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CaptureRequest.ProtoReflect.Descriptor instead.
 func (*CaptureRequest) Descriptor() ([]byte, []int) {
-	return file_ledger_v1_ledger_proto_rawDescGZIP(), []int{8}
+	return file_ledger_v1_ledger_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *CaptureRequest) GetIdempotencyKey() string {
@@ -822,7 +987,7 @@ type CaptureResponse struct {
 
 func (x *CaptureResponse) Reset() {
 	*x = CaptureResponse{}
-	mi := &file_ledger_v1_ledger_proto_msgTypes[9]
+	mi := &file_ledger_v1_ledger_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -834,7 +999,7 @@ func (x *CaptureResponse) String() string {
 func (*CaptureResponse) ProtoMessage() {}
 
 func (x *CaptureResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ledger_v1_ledger_proto_msgTypes[9]
+	mi := &file_ledger_v1_ledger_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -847,7 +1012,7 @@ func (x *CaptureResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CaptureResponse.ProtoReflect.Descriptor instead.
 func (*CaptureResponse) Descriptor() ([]byte, []int) {
-	return file_ledger_v1_ledger_proto_rawDescGZIP(), []int{9}
+	return file_ledger_v1_ledger_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *CaptureResponse) GetTransfer() *Transfer {
@@ -866,7 +1031,7 @@ type VoidRequest struct {
 
 func (x *VoidRequest) Reset() {
 	*x = VoidRequest{}
-	mi := &file_ledger_v1_ledger_proto_msgTypes[10]
+	mi := &file_ledger_v1_ledger_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -878,7 +1043,7 @@ func (x *VoidRequest) String() string {
 func (*VoidRequest) ProtoMessage() {}
 
 func (x *VoidRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ledger_v1_ledger_proto_msgTypes[10]
+	mi := &file_ledger_v1_ledger_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -891,7 +1056,7 @@ func (x *VoidRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VoidRequest.ProtoReflect.Descriptor instead.
 func (*VoidRequest) Descriptor() ([]byte, []int) {
-	return file_ledger_v1_ledger_proto_rawDescGZIP(), []int{10}
+	return file_ledger_v1_ledger_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *VoidRequest) GetHoldId() string {
@@ -910,7 +1075,7 @@ type VoidResponse struct {
 
 func (x *VoidResponse) Reset() {
 	*x = VoidResponse{}
-	mi := &file_ledger_v1_ledger_proto_msgTypes[11]
+	mi := &file_ledger_v1_ledger_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -922,7 +1087,7 @@ func (x *VoidResponse) String() string {
 func (*VoidResponse) ProtoMessage() {}
 
 func (x *VoidResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ledger_v1_ledger_proto_msgTypes[11]
+	mi := &file_ledger_v1_ledger_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -935,7 +1100,7 @@ func (x *VoidResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VoidResponse.ProtoReflect.Descriptor instead.
 func (*VoidResponse) Descriptor() ([]byte, []int) {
-	return file_ledger_v1_ledger_proto_rawDescGZIP(), []int{11}
+	return file_ledger_v1_ledger_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *VoidResponse) GetHold() *Hold {
@@ -954,7 +1119,7 @@ type GetAccountRequest struct {
 
 func (x *GetAccountRequest) Reset() {
 	*x = GetAccountRequest{}
-	mi := &file_ledger_v1_ledger_proto_msgTypes[12]
+	mi := &file_ledger_v1_ledger_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -966,7 +1131,7 @@ func (x *GetAccountRequest) String() string {
 func (*GetAccountRequest) ProtoMessage() {}
 
 func (x *GetAccountRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ledger_v1_ledger_proto_msgTypes[12]
+	mi := &file_ledger_v1_ledger_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -979,7 +1144,7 @@ func (x *GetAccountRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAccountRequest.ProtoReflect.Descriptor instead.
 func (*GetAccountRequest) Descriptor() ([]byte, []int) {
-	return file_ledger_v1_ledger_proto_rawDescGZIP(), []int{12}
+	return file_ledger_v1_ledger_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *GetAccountRequest) GetId() string {
@@ -998,7 +1163,7 @@ type GetAccountResponse struct {
 
 func (x *GetAccountResponse) Reset() {
 	*x = GetAccountResponse{}
-	mi := &file_ledger_v1_ledger_proto_msgTypes[13]
+	mi := &file_ledger_v1_ledger_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1010,7 +1175,7 @@ func (x *GetAccountResponse) String() string {
 func (*GetAccountResponse) ProtoMessage() {}
 
 func (x *GetAccountResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ledger_v1_ledger_proto_msgTypes[13]
+	mi := &file_ledger_v1_ledger_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1023,7 +1188,7 @@ func (x *GetAccountResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAccountResponse.ProtoReflect.Descriptor instead.
 func (*GetAccountResponse) Descriptor() ([]byte, []int) {
-	return file_ledger_v1_ledger_proto_rawDescGZIP(), []int{13}
+	return file_ledger_v1_ledger_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *GetAccountResponse) GetAccount() *Account {
@@ -1042,7 +1207,7 @@ type GetAccountEntriesRequest struct {
 
 func (x *GetAccountEntriesRequest) Reset() {
 	*x = GetAccountEntriesRequest{}
-	mi := &file_ledger_v1_ledger_proto_msgTypes[14]
+	mi := &file_ledger_v1_ledger_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1054,7 +1219,7 @@ func (x *GetAccountEntriesRequest) String() string {
 func (*GetAccountEntriesRequest) ProtoMessage() {}
 
 func (x *GetAccountEntriesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_ledger_v1_ledger_proto_msgTypes[14]
+	mi := &file_ledger_v1_ledger_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1067,7 +1232,7 @@ func (x *GetAccountEntriesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAccountEntriesRequest.ProtoReflect.Descriptor instead.
 func (*GetAccountEntriesRequest) Descriptor() ([]byte, []int) {
-	return file_ledger_v1_ledger_proto_rawDescGZIP(), []int{14}
+	return file_ledger_v1_ledger_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *GetAccountEntriesRequest) GetAccountId() string {
@@ -1086,7 +1251,7 @@ type GetAccountEntriesResponse struct {
 
 func (x *GetAccountEntriesResponse) Reset() {
 	*x = GetAccountEntriesResponse{}
-	mi := &file_ledger_v1_ledger_proto_msgTypes[15]
+	mi := &file_ledger_v1_ledger_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1098,7 +1263,7 @@ func (x *GetAccountEntriesResponse) String() string {
 func (*GetAccountEntriesResponse) ProtoMessage() {}
 
 func (x *GetAccountEntriesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_ledger_v1_ledger_proto_msgTypes[15]
+	mi := &file_ledger_v1_ledger_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1111,7 +1276,7 @@ func (x *GetAccountEntriesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAccountEntriesResponse.ProtoReflect.Descriptor instead.
 func (*GetAccountEntriesResponse) Descriptor() ([]byte, []int) {
-	return file_ledger_v1_ledger_proto_rawDescGZIP(), []int{15}
+	return file_ledger_v1_ledger_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *GetAccountEntriesResponse) GetEntries() []*Entry {
@@ -1172,6 +1337,16 @@ const file_ledger_v1_ledger_proto_rawDesc = "" +
 	"\rto_account_id\x18\x03 \x01(\tR\vtoAccountId\x12\x16\n" +
 	"\x06amount\x18\x04 \x01(\x03R\x06amount\"C\n" +
 	"\x10TransferResponse\x12/\n" +
+	"\btransfer\x18\x01 \x01(\v2\x13.ledger.v1.TransferR\btransfer\"@\n" +
+	"\aPosting\x12\x1d\n" +
+	"\n" +
+	"account_id\x18\x01 \x01(\tR\taccountId\x12\x16\n" +
+	"\x06amount\x18\x02 \x01(\x03R\x06amount\"\x8b\x01\n" +
+	"\x14CreatePostingRequest\x12'\n" +
+	"\x0fidempotency_key\x18\x01 \x01(\tR\x0eidempotencyKey\x12\x1a\n" +
+	"\bcurrency\x18\x02 \x01(\tR\bcurrency\x12.\n" +
+	"\bpostings\x18\x03 \x03(\v2\x12.ledger.v1.PostingR\bpostings\"H\n" +
+	"\x15CreatePostingResponse\x12/\n" +
 	"\btransfer\x18\x01 \x01(\v2\x13.ledger.v1.TransferR\btransfer\"\xcd\x01\n" +
 	"\x10AuthorizeRequest\x12'\n" +
 	"\x0fidempotency_key\x18\x01 \x01(\tR\x0eidempotencyKey\x12&\n" +
@@ -1209,9 +1384,10 @@ const file_ledger_v1_ledger_proto_rawDesc = "" +
 	"\x12HOLD_STATUS_ACTIVE\x10\x01\x12\x18\n" +
 	"\x14HOLD_STATUS_CAPTURED\x10\x02\x12\x16\n" +
 	"\x12HOLD_STATUS_VOIDED\x10\x03\x12\x17\n" +
-	"\x13HOLD_STATUS_EXPIRED\x10\x042\xc2\x03\n" +
+	"\x13HOLD_STATUS_EXPIRED\x10\x042\x96\x04\n" +
 	"\rLedgerService\x12C\n" +
-	"\bTransfer\x12\x1a.ledger.v1.TransferRequest\x1a\x1b.ledger.v1.TransferResponse\x12F\n" +
+	"\bTransfer\x12\x1a.ledger.v1.TransferRequest\x1a\x1b.ledger.v1.TransferResponse\x12R\n" +
+	"\rCreatePosting\x12\x1f.ledger.v1.CreatePostingRequest\x1a .ledger.v1.CreatePostingResponse\x12F\n" +
 	"\tAuthorize\x12\x1b.ledger.v1.AuthorizeRequest\x1a\x1c.ledger.v1.AuthorizeResponse\x12@\n" +
 	"\aCapture\x12\x19.ledger.v1.CaptureRequest\x1a\x1a.ledger.v1.CaptureResponse\x127\n" +
 	"\x04Void\x12\x16.ledger.v1.VoidRequest\x1a\x17.ledger.v1.VoidResponse\x12I\n" +
@@ -1232,7 +1408,7 @@ func file_ledger_v1_ledger_proto_rawDescGZIP() []byte {
 }
 
 var file_ledger_v1_ledger_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_ledger_v1_ledger_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_ledger_v1_ledger_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_ledger_v1_ledger_proto_goTypes = []any{
 	(TransferStatus)(0),               // 0: ledger.v1.TransferStatus
 	(HoldStatus)(0),                   // 1: ledger.v1.HoldStatus
@@ -1242,49 +1418,56 @@ var file_ledger_v1_ledger_proto_goTypes = []any{
 	(*Hold)(nil),                      // 5: ledger.v1.Hold
 	(*TransferRequest)(nil),           // 6: ledger.v1.TransferRequest
 	(*TransferResponse)(nil),          // 7: ledger.v1.TransferResponse
-	(*AuthorizeRequest)(nil),          // 8: ledger.v1.AuthorizeRequest
-	(*AuthorizeResponse)(nil),         // 9: ledger.v1.AuthorizeResponse
-	(*CaptureRequest)(nil),            // 10: ledger.v1.CaptureRequest
-	(*CaptureResponse)(nil),           // 11: ledger.v1.CaptureResponse
-	(*VoidRequest)(nil),               // 12: ledger.v1.VoidRequest
-	(*VoidResponse)(nil),              // 13: ledger.v1.VoidResponse
-	(*GetAccountRequest)(nil),         // 14: ledger.v1.GetAccountRequest
-	(*GetAccountResponse)(nil),        // 15: ledger.v1.GetAccountResponse
-	(*GetAccountEntriesRequest)(nil),  // 16: ledger.v1.GetAccountEntriesRequest
-	(*GetAccountEntriesResponse)(nil), // 17: ledger.v1.GetAccountEntriesResponse
-	(*timestamppb.Timestamp)(nil),     // 18: google.protobuf.Timestamp
+	(*Posting)(nil),                   // 8: ledger.v1.Posting
+	(*CreatePostingRequest)(nil),      // 9: ledger.v1.CreatePostingRequest
+	(*CreatePostingResponse)(nil),     // 10: ledger.v1.CreatePostingResponse
+	(*AuthorizeRequest)(nil),          // 11: ledger.v1.AuthorizeRequest
+	(*AuthorizeResponse)(nil),         // 12: ledger.v1.AuthorizeResponse
+	(*CaptureRequest)(nil),            // 13: ledger.v1.CaptureRequest
+	(*CaptureResponse)(nil),           // 14: ledger.v1.CaptureResponse
+	(*VoidRequest)(nil),               // 15: ledger.v1.VoidRequest
+	(*VoidResponse)(nil),              // 16: ledger.v1.VoidResponse
+	(*GetAccountRequest)(nil),         // 17: ledger.v1.GetAccountRequest
+	(*GetAccountResponse)(nil),        // 18: ledger.v1.GetAccountResponse
+	(*GetAccountEntriesRequest)(nil),  // 19: ledger.v1.GetAccountEntriesRequest
+	(*GetAccountEntriesResponse)(nil), // 20: ledger.v1.GetAccountEntriesResponse
+	(*timestamppb.Timestamp)(nil),     // 21: google.protobuf.Timestamp
 }
 var file_ledger_v1_ledger_proto_depIdxs = []int32{
-	18, // 0: ledger.v1.Entry.created_at:type_name -> google.protobuf.Timestamp
+	21, // 0: ledger.v1.Entry.created_at:type_name -> google.protobuf.Timestamp
 	0,  // 1: ledger.v1.Transfer.status:type_name -> ledger.v1.TransferStatus
-	18, // 2: ledger.v1.Transfer.created_at:type_name -> google.protobuf.Timestamp
+	21, // 2: ledger.v1.Transfer.created_at:type_name -> google.protobuf.Timestamp
 	3,  // 3: ledger.v1.Transfer.entries:type_name -> ledger.v1.Entry
 	1,  // 4: ledger.v1.Hold.status:type_name -> ledger.v1.HoldStatus
-	18, // 5: ledger.v1.Hold.created_at:type_name -> google.protobuf.Timestamp
-	18, // 6: ledger.v1.Hold.expires_at:type_name -> google.protobuf.Timestamp
+	21, // 5: ledger.v1.Hold.created_at:type_name -> google.protobuf.Timestamp
+	21, // 6: ledger.v1.Hold.expires_at:type_name -> google.protobuf.Timestamp
 	4,  // 7: ledger.v1.TransferResponse.transfer:type_name -> ledger.v1.Transfer
-	5,  // 8: ledger.v1.AuthorizeResponse.hold:type_name -> ledger.v1.Hold
-	4,  // 9: ledger.v1.CaptureResponse.transfer:type_name -> ledger.v1.Transfer
-	5,  // 10: ledger.v1.VoidResponse.hold:type_name -> ledger.v1.Hold
-	2,  // 11: ledger.v1.GetAccountResponse.account:type_name -> ledger.v1.Account
-	3,  // 12: ledger.v1.GetAccountEntriesResponse.entries:type_name -> ledger.v1.Entry
-	6,  // 13: ledger.v1.LedgerService.Transfer:input_type -> ledger.v1.TransferRequest
-	8,  // 14: ledger.v1.LedgerService.Authorize:input_type -> ledger.v1.AuthorizeRequest
-	10, // 15: ledger.v1.LedgerService.Capture:input_type -> ledger.v1.CaptureRequest
-	12, // 16: ledger.v1.LedgerService.Void:input_type -> ledger.v1.VoidRequest
-	14, // 17: ledger.v1.LedgerService.GetAccount:input_type -> ledger.v1.GetAccountRequest
-	16, // 18: ledger.v1.LedgerService.GetAccountEntries:input_type -> ledger.v1.GetAccountEntriesRequest
-	7,  // 19: ledger.v1.LedgerService.Transfer:output_type -> ledger.v1.TransferResponse
-	9,  // 20: ledger.v1.LedgerService.Authorize:output_type -> ledger.v1.AuthorizeResponse
-	11, // 21: ledger.v1.LedgerService.Capture:output_type -> ledger.v1.CaptureResponse
-	13, // 22: ledger.v1.LedgerService.Void:output_type -> ledger.v1.VoidResponse
-	15, // 23: ledger.v1.LedgerService.GetAccount:output_type -> ledger.v1.GetAccountResponse
-	17, // 24: ledger.v1.LedgerService.GetAccountEntries:output_type -> ledger.v1.GetAccountEntriesResponse
-	19, // [19:25] is the sub-list for method output_type
-	13, // [13:19] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	8,  // 8: ledger.v1.CreatePostingRequest.postings:type_name -> ledger.v1.Posting
+	4,  // 9: ledger.v1.CreatePostingResponse.transfer:type_name -> ledger.v1.Transfer
+	5,  // 10: ledger.v1.AuthorizeResponse.hold:type_name -> ledger.v1.Hold
+	4,  // 11: ledger.v1.CaptureResponse.transfer:type_name -> ledger.v1.Transfer
+	5,  // 12: ledger.v1.VoidResponse.hold:type_name -> ledger.v1.Hold
+	2,  // 13: ledger.v1.GetAccountResponse.account:type_name -> ledger.v1.Account
+	3,  // 14: ledger.v1.GetAccountEntriesResponse.entries:type_name -> ledger.v1.Entry
+	6,  // 15: ledger.v1.LedgerService.Transfer:input_type -> ledger.v1.TransferRequest
+	9,  // 16: ledger.v1.LedgerService.CreatePosting:input_type -> ledger.v1.CreatePostingRequest
+	11, // 17: ledger.v1.LedgerService.Authorize:input_type -> ledger.v1.AuthorizeRequest
+	13, // 18: ledger.v1.LedgerService.Capture:input_type -> ledger.v1.CaptureRequest
+	15, // 19: ledger.v1.LedgerService.Void:input_type -> ledger.v1.VoidRequest
+	17, // 20: ledger.v1.LedgerService.GetAccount:input_type -> ledger.v1.GetAccountRequest
+	19, // 21: ledger.v1.LedgerService.GetAccountEntries:input_type -> ledger.v1.GetAccountEntriesRequest
+	7,  // 22: ledger.v1.LedgerService.Transfer:output_type -> ledger.v1.TransferResponse
+	10, // 23: ledger.v1.LedgerService.CreatePosting:output_type -> ledger.v1.CreatePostingResponse
+	12, // 24: ledger.v1.LedgerService.Authorize:output_type -> ledger.v1.AuthorizeResponse
+	14, // 25: ledger.v1.LedgerService.Capture:output_type -> ledger.v1.CaptureResponse
+	16, // 26: ledger.v1.LedgerService.Void:output_type -> ledger.v1.VoidResponse
+	18, // 27: ledger.v1.LedgerService.GetAccount:output_type -> ledger.v1.GetAccountResponse
+	20, // 28: ledger.v1.LedgerService.GetAccountEntries:output_type -> ledger.v1.GetAccountEntriesResponse
+	22, // [22:29] is the sub-list for method output_type
+	15, // [15:22] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_ledger_v1_ledger_proto_init() }
@@ -1298,7 +1481,7 @@ func file_ledger_v1_ledger_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ledger_v1_ledger_proto_rawDesc), len(file_ledger_v1_ledger_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   16,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

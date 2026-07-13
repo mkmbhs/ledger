@@ -5,6 +5,29 @@ Notable changes to this module. The format follows
 [SemVer](https://semver.org) with v0.x semantics (minor versions may change
 the API).
 
+## [Unreleased]
+
+### Added
+
+- Multi-leg (n:n) postings as the general form of money movement: `Service.Post`
+  applies a balanced set of two or more signed legs — a fee split, a settlement —
+  atomically and idempotently. REST `POST /v1/postings` and gRPC `CreatePosting`
+  expose it; the existing transfer endpoints are unchanged and now sugar over
+  the two-leg case. Six new `ledgertest` scenarios (catalog v1 grows 20 → 26,
+  add-only) cover fee splits, atomic multi-debit rejection, n-leg idempotent
+  replay, and concurrent n-leg conservation.
+
+### Changed
+
+- **Breaking (v0.x):** the `ledger.Store` interface replaces
+  `ApplyTransfer(TransferRequest)` with `ApplyPosting(PostRequest)` — both
+  bundled stores implement only the general path, and a two-party transfer is
+  simply the two-leg case. `Service.Transfer` keeps its signature and behavior.
+- `transfers.from_account_id`, `to_account_id`, and `amount` are nullable as of
+  migration 0004: populated for two-leg transfers (readability), NULL for
+  larger postings — the entries are the record, all-or-nothing enforced by a
+  CHECK constraint.
+
 ## [0.1.0] — 2026-07-13
 
 First tagged release. Import paths are stable as of this tag: the core is
