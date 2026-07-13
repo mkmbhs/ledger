@@ -47,7 +47,7 @@ func TestTransfer_Basic(t *testing.T) {
 		t.Errorf("bob balance = %d, want 250", got)
 	}
 	// Double-entry invariant: the two entries sum to zero.
-	if err := assertBalanced(tr.Entries); err != nil {
+	if err := AssertBalanced(tr.Entries); err != nil {
 		t.Errorf("entries not balanced: %v", err)
 	}
 	if tr.Status != StatusPosted {
@@ -212,5 +212,75 @@ func TestTransfer_ConcurrentConservation(t *testing.T) {
 
 	if after := total(); after != before {
 		t.Errorf("money not conserved: before=%d after=%d", before, after)
+	}
+}
+
+// TestAssertBalanced exercises the exported double-entry check that every
+// entry-writing path (in both stores) runs before committing.
+func TestAssertBalanced(t *testing.T) {
+	cases := []struct {
+		name    string
+		entries []Entry
+		wantErr bool
+	}{
+		{"balanced pair", []Entry{{Amount: -100}, {Amount: 100}}, false},
+		{"balanced multi", []Entry{{Amount: -100}, {Amount: 60}, {Amount: 40}}, false},
+		{"unbalanced pair", []Entry{{Amount: -100}, {Amount: 99}}, true},
+		{"both positive", []Entry{{Amount: 100}, {Amount: 100}}, true},
+		{"single entry", []Entry{{Amount: 0}}, true},
+		{"no entries", nil, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := AssertBalanced(tc.entries); (err != nil) != tc.wantErr {
+				t.Errorf("AssertBalanced(%v) err = %v, wantErr = %v", tc.entries, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestCreateAccount_Idempotent pins the create semantics: an identical
+// re-create is a no-op (a retried setup call is safe), while re-creating with
+// different attributes is refused.
+func TestCreateAccount_Idempotent(t *testing.T) {
+	s := newService(t)
+	mustAccount(t, s, "alice", "USD", 1000)
+
+	if err := s.CreateAccount(context.Background(), "alice", "USD", 1000); err != nil {
+		t.Fatalf("identical re-create: %v", err)
+	}
+	if got := balance(t, s, "alice"); got != 1000 {
+		t.Errorf("balance after identical re-create = %d, want 1000", got)
+	}
+
+	if err := s.CreateAccount(context.Background(), "alice", "EUR", 1000); !errors.Is(err, ErrAccountExists) {
+		t.Errorf("re-create with different currency err = %v, want ErrAccountExists", err)
+	}
+	if err := s.CreateAccount(context.Background(), "alice", "USD", 5); !errors.Is(err, ErrAccountExists) {
+		t.Errorf("re-create with different opening err = %v, want ErrAccountExists", err)
+	}
+}
+
+// TestCreateAccount_DoesNotResetLiveBalance guards the footgun the semantics
+// exist for: once money has moved, a re-create with the original opening no
+// longer matches the live account and must be refused, not applied.
+func TestCreateAccount_DoesNotResetLiveBalance(t *testing.T) {
+	s := newService(t)
+	mustAccount(t, s, "alice", "USD", 1000)
+	mustAccount(t, s, "bob", "USD", 0)
+	if _, err := s.Transfer(context.Background(), TransferRequest{
+		IdempotencyKey: "k", FromAccountID: "alice", ToAccountID: "bob", Amount: 250,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.CreateAccount(context.Background(), "alice", "USD", 1000); !errors.Is(err, ErrAccountExists) {
+		t.Errorf("re-create of live account err = %v, want ErrAccountExists", err)
+	}
+	if got := balance(t, s, "alice"); got != 750 {
+		t.Errorf("alice balance = %d, want 750 (unchanged)", got)
+	}
+	if got := balance(t, s, "bob"); got != 250 {
+		t.Errorf("bob balance = %d, want 250 (unchanged)", got)
 	}
 }

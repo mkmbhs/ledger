@@ -17,7 +17,10 @@ import (
 //   - (M2) a PostgreSQL implementation using SELECT ... FOR UPDATE and a
 //     unique constraint on the idempotency key inside a single SQL transaction.
 type Store interface {
-	// CreateAccount registers an account. Used for setup.
+	// CreateAccount registers an account. Used for setup. Idempotent:
+	// re-creating an account with identical attributes is a no-op; re-creating
+	// with different attributes (including a balance that has since moved)
+	// returns ErrAccountExists, so an existing balance is never silently reset.
 	CreateAccount(ctx context.Context, a Account) error
 
 	// GetAccount returns an account by ID, or ErrAccountNotFound.

@@ -200,6 +200,8 @@ func statusForError(err error) (int, string) {
 		return http.StatusNotFound, "hold_not_found"
 	case errors.Is(err, ledger.ErrIdempotencyConflict):
 		return http.StatusConflict, "idempotency_conflict"
+	case errors.Is(err, ledger.ErrAccountExists):
+		return http.StatusConflict, "account_exists"
 	case errors.Is(err, ledger.ErrInvalidAmount):
 		return http.StatusBadRequest, "invalid_amount"
 	case errors.Is(err, ledger.ErrSameAccount):

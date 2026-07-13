@@ -47,6 +47,11 @@ func (s *Store) ApplyTransfer(ctx context.Context, req ledger.TransferRequest) (
 		}
 
 		t := buildTransfer(req.IdempotencyKey, from.ID, to.ID, from.Currency, req.Amount, time.Now().UTC())
+		// The double-entry invariant is enforced on every path that writes
+		// entries; a failure here rolls the transaction back untouched.
+		if err := ledger.AssertBalanced(t.Entries); err != nil {
+			return err
+		}
 		if err := insertTransferRows(ctx, tx, t); err != nil {
 			if isUniqueViolation(err) {
 				return errDuplicate

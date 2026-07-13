@@ -230,3 +230,22 @@ func TestErrorMapping_400InsufficientFunds(t *testing.T) {
 		t.Fatalf("overdraft = %d %q, want 400 insufficient_funds", code, body.Code)
 	}
 }
+
+// TestCreateAccount_Conflict maps the idempotent-create semantics onto HTTP: an
+// identical re-create is 201 again, a mismatched one is 409 account_exists.
+func TestCreateAccount_Conflict(t *testing.T) {
+	srv := newServer(t)
+	createAccount(t, srv.URL, "alice", "USD", 1000)
+	createAccount(t, srv.URL, "alice", "USD", 1000) // identical retry: still 201
+
+	var errResp errorBody
+	code := do(t, http.MethodPost, srv.URL+"/v1/accounts", map[string]any{
+		"id": "alice", "currency": "USD", "opening": 5,
+	}, &errResp)
+	if code != http.StatusConflict {
+		t.Fatalf("mismatched re-create: status = %d, want 409", code)
+	}
+	if errResp.Code != "account_exists" {
+		t.Errorf("error code = %q, want account_exists", errResp.Code)
+	}
+}

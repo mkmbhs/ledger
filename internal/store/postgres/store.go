@@ -103,18 +103,30 @@ func newID() string {
 	return hex.EncodeToString(b[:])
 }
 
-// CreateAccount registers an account, overwriting any existing row with the same
-// id (the reference store's map-assignment semantics).
+// CreateAccount registers an account. Idempotent, mirroring the reference
+// store: DO NOTHING on conflict, then read the existing row back and compare —
+// an identical re-create is a no-op, anything else is ErrAccountExists. An
+// existing account's money is never silently reset.
 func (s *Store) CreateAccount(ctx context.Context, a ledger.Account) error {
-	_, err := s.pool.Exec(ctx, `
+	tag, err := s.pool.Exec(ctx, `
 		INSERT INTO accounts (id, currency, balance, held)
 		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (id) DO UPDATE
-		SET currency = EXCLUDED.currency,
-		    balance  = EXCLUDED.balance,
-		    held     = EXCLUDED.held`,
+		ON CONFLICT (id) DO NOTHING`,
 		a.ID, a.Currency, int64(a.Balance), int64(a.Held))
-	return err
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 1 {
+		return nil
+	}
+	existing, err := s.GetAccount(ctx, a.ID)
+	if err != nil {
+		return err
+	}
+	if existing != a {
+		return ledger.ErrAccountExists
+	}
+	return nil
 }
 
 // GetAccount returns an account by id, or ledger.ErrAccountNotFound.

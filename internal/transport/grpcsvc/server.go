@@ -110,7 +110,8 @@ func toStatus(err error) error {
 	case errors.Is(err, ledger.ErrAccountNotFound),
 		errors.Is(err, ledger.ErrHoldNotFound):
 		return status.Error(codes.NotFound, err.Error())
-	case errors.Is(err, ledger.ErrIdempotencyConflict):
+	case errors.Is(err, ledger.ErrIdempotencyConflict),
+		errors.Is(err, ledger.ErrAccountExists):
 		return status.Error(codes.AlreadyExists, err.Error())
 	case errors.Is(err, ledger.ErrInvalidAmount),
 		errors.Is(err, ledger.ErrSameAccount),

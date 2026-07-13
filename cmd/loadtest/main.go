@@ -103,8 +103,14 @@ func run() error {
 	return nil
 }
 
-// accountID renders a stable, zero-padded id like "acct-0007".
-func accountID(i int) string { return fmt.Sprintf("acct-%04d", i) }
+// runPrefix makes each run's accounts unique. Account creation is idempotent —
+// re-creating an account whose balance has moved is refused — so a re-run
+// against a persistent stack must seed fresh accounts rather than reset the
+// previous run's. Conservation is then checked over exactly this run's money.
+var runPrefix = fmt.Sprintf("acct-%d", time.Now().UnixMilli())
+
+// accountID renders a run-scoped, zero-padded id like "acct-1752000000000-0007".
+func accountID(i int) string { return fmt.Sprintf("%s-%04d", runPrefix, i) }
 
 // seed creates every account with the configured opening balance.
 func seed(ctx context.Context, client *http.Client, cfg config) error {

@@ -8,6 +8,7 @@ package ledger
 
 import (
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -43,6 +44,25 @@ type Entry struct {
 	AccountID  string
 	Amount     Money
 	CreatedAt  time.Time
+}
+
+// AssertBalanced verifies the core double-entry invariant: a transfer's entries
+// must sum to zero, and there must be at least two of them. Every path that
+// writes entries — in every Store implementation — must call this before
+// committing any state; if it ever fires, there is a bug in the store, and the
+// write is refused rather than let the books go out of balance.
+func AssertBalanced(entries []Entry) error {
+	if len(entries) < 2 {
+		return fmt.Errorf("ledger: a transfer needs at least two entries, got %d", len(entries))
+	}
+	var sum Money
+	for _, e := range entries {
+		sum += e.Amount
+	}
+	if sum != 0 {
+		return fmt.Errorf("ledger: entries do not balance, sum=%d", sum)
+	}
+	return nil
 }
 
 // TransferStatus is the lifecycle state of a transfer. In M1 a transfer is
@@ -129,6 +149,7 @@ var (
 	ErrSameAccount           = errors.New("ledger: source and destination must differ")
 	ErrMissingIdempotencyKey = errors.New("ledger: idempotency key is required")
 	ErrAccountNotFound       = errors.New("ledger: account not found")
+	ErrAccountExists         = errors.New("ledger: account already exists with different attributes")
 	ErrCurrencyMismatch      = errors.New("ledger: account currencies do not match")
 	ErrInsufficientFunds     = errors.New("ledger: insufficient funds")
 	ErrIdempotencyConflict   = errors.New("ledger: idempotency key reused with different parameters")

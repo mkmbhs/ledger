@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -652,6 +653,116 @@ func TestPG_Transfer_CannotSpendHeldFunds(t *testing.T) {
 	a := getAccount(t, "alice")
 	if a.Balance != 800 || a.Held != 800 || a.Available() != 0 {
 		t.Errorf("alice balance=%d held=%d available=%d, want 800/800/0", a.Balance, a.Held, a.Available())
+	}
+	assertInvariants(t, map[string]ledger.Money{"alice": 1000, "bob": 0})
+}
+
+// TestPG_DB_RefusesUnbalancedEntries proves the database-level backstop: even
+// bypassing the application entirely, a transaction whose entries do not sum to
+// zero per transfer is refused at COMMIT by the deferred constraint trigger.
+func TestPG_DB_RefusesUnbalancedEntries(t *testing.T) {
+	reset(t)
+	createAccount(t, "alice", "USD", 1000)
+	createAccount(t, "bob", "USD", 0)
+	ctx := context.Background()
+
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO transfers (id, idempotency_key, from_account_id, to_account_id, amount, currency, status)
+		VALUES ('t-bad', 'k-bad', 'alice', 'bob', 100, 'USD', 'posted')`); err != nil {
+		t.Fatalf("insert transfer: %v", err)
+	}
+	// A lone debit with no matching credit: money would vanish.
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO entries (id, transfer_id, account_id, amount)
+		VALUES ('e-bad', 't-bad', 'alice', -100)`); err != nil {
+		t.Fatalf("insert entry: %v", err)
+	}
+	err = tx.Commit(ctx)
+	if err == nil {
+		t.Fatal("commit of unbalanced entries succeeded, want rejection by trigger")
+	}
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23000" {
+		t.Errorf("commit err = %v, want integrity_constraint_violation (23000)", err)
+	}
+
+	// The rejected transaction left nothing behind.
+	var n int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM transfers WHERE id = 't-bad'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("unbalanced transfer row survived the rolled-back commit")
+	}
+}
+
+// TestPG_DB_RefusesUnbalancingDelete proves the backstop also catches an
+// unbalancing mutation of existing rows: deleting one side of a posted transfer
+// is refused at COMMIT.
+func TestPG_DB_RefusesUnbalancingDelete(t *testing.T) {
+	reset(t)
+	createAccount(t, "alice", "USD", 1000)
+	createAccount(t, "bob", "USD", 0)
+	ctx := context.Background()
+
+	tr, err := transfer(t, "k1", "alice", "bob", 250)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `DELETE FROM entries WHERE transfer_id = $1 AND amount < 0`, tr.ID); err != nil {
+		t.Fatalf("delete entry: %v", err)
+	}
+	if err := tx.Commit(ctx); err == nil {
+		t.Fatal("commit deleting one entry succeeded, want rejection by trigger")
+	}
+
+	// Both entries survived.
+	entries, err := testStore.AccountEntries(ctx, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Amount != -250 {
+		t.Errorf("alice entries after refused delete = %+v, want the original debit", entries)
+	}
+	assertInvariants(t, map[string]ledger.Money{"alice": 1000, "bob": 0})
+}
+
+// TestPG_CreateAccount_Idempotent mirrors the reference store's create
+// semantics: identical re-create is a no-op, different attributes are refused,
+// and a live balance is never reset by a repeated setup call.
+func TestPG_CreateAccount_Idempotent(t *testing.T) {
+	reset(t)
+	createAccount(t, "alice", "USD", 1000)
+	createAccount(t, "bob", "USD", 0)
+	ctx := context.Background()
+
+	if err := testStore.CreateAccount(ctx, ledger.Account{ID: "alice", Currency: "USD", Balance: 1000}); err != nil {
+		t.Fatalf("identical re-create: %v", err)
+	}
+	if err := testStore.CreateAccount(ctx, ledger.Account{ID: "alice", Currency: "EUR", Balance: 1000}); !errors.Is(err, ledger.ErrAccountExists) {
+		t.Errorf("different currency err = %v, want ErrAccountExists", err)
+	}
+
+	if _, err := transfer(t, "k1", "alice", "bob", 250); err != nil {
+		t.Fatal(err)
+	}
+	if err := testStore.CreateAccount(ctx, ledger.Account{ID: "alice", Currency: "USD", Balance: 1000}); !errors.Is(err, ledger.ErrAccountExists) {
+		t.Errorf("re-create of live account err = %v, want ErrAccountExists", err)
+	}
+	if a := getAccount(t, "alice"); a.Balance != 750 {
+		t.Errorf("alice balance = %d, want 750 (never reset)", a.Balance)
 	}
 	assertInvariants(t, map[string]ledger.Money{"alice": 1000, "bob": 0})
 }

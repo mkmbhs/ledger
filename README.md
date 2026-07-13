@@ -1,5 +1,7 @@
 # ledger
 
+[![CI](https://github.com/mkmbhs/ledger/actions/workflows/ci.yml/badge.svg)](https://github.com/mkmbhs/ledger/actions/workflows/ci.yml)
+
 A small, correct **wallet / payments ledger** in Go. It does the two things that
 make moving money hard — **transactional correctness** and **safe retries** —
 and it models the real payment lifecycle with **authorization holds**
@@ -72,7 +74,10 @@ the `Service`; atomic, idempotent application lives behind the `Store` interface
 - PostgreSQL (`internal/store/postgres`, schema in
   [`migrations/0001_init.sql`](migrations/0001_init.sql)) — a `UNIQUE` constraint
   on the idempotency key plus `SELECT ... FOR UPDATE` (in a deadlock-safe, sorted
-  lock order) inside one transaction give the same guarantees at scale. A
+  lock order) inside one transaction give the same guarantees at scale, and a
+  deferred constraint trigger
+  ([`migrations/0003_entries_must_balance.sql`](migrations/0003_entries_must_balance.sql))
+  makes the database itself refuse a commit whose entries don't balance. A
   testcontainers conformance suite runs the same scenarios as the in-memory
   reference against a real Postgres.
 
@@ -94,6 +99,13 @@ Run with the race detector (`make race`):
 - Validation across the board: insufficient funds, currency mismatch, unknown
   account, over-capture, capture-after-void, expired-hold, and idempotency
   conflicts.
+- **Unbalanced writes are refused, twice** — every path that writes entries
+  enforces the zero-sum check in code, and a deferred constraint trigger makes
+  PostgreSQL itself refuse any commit whose entries don't sum to zero. The
+  integration suite proves it with direct SQL that bypasses the application.
+- **Account creation is idempotent** — re-creating an account identically is a
+  no-op; a mismatched re-create is refused, so an existing balance is never
+  silently reset.
 
 ~90% statement coverage; `go vet` and `gofmt` clean.
 

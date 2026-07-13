@@ -39,9 +39,19 @@ func NewMemStore() *MemStore {
 	}
 }
 
+// CreateAccount registers an account. Idempotent: re-creating an account with
+// identical attributes is a no-op, so a retried setup call is safe. Re-creating
+// with different attributes — including a balance that has since moved — returns
+// ErrAccountExists: an existing account's money is never silently reset.
 func (s *MemStore) CreateAccount(_ context.Context, a Account) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if existing, ok := s.accounts[a.ID]; ok {
+		if existing != a {
+			return ErrAccountExists
+		}
+		return nil
+	}
 	s.accounts[a.ID] = a
 	return nil
 }
@@ -99,13 +109,7 @@ func (s *MemStore) ApplyTransfer(_ context.Context, req TransferRequest) (Transf
 		return Transfer{}, ErrInsufficientFunds
 	}
 
-	// Apply the balance changes.
-	from.Balance -= req.Amount
-	to.Balance += req.Amount
-	s.accounts[from.ID] = from
-	s.accounts[to.ID] = to
-
-	// Record the transfer with its two balanced entries.
+	// Build the transfer with its two balanced entries.
 	now := s.now()
 	tid := newID()
 	t := Transfer{
@@ -124,10 +128,17 @@ func (s *MemStore) ApplyTransfer(_ context.Context, req TransferRequest) (Transf
 	}
 
 	// Invariant: the entries of a transfer always sum to zero (money is neither
-	// created nor destroyed). This is the heart of double-entry accounting.
-	if err := assertBalanced(t.Entries); err != nil {
+	// created nor destroyed). Checked before any state changes so a failed write
+	// leaves the store untouched. This is the heart of double-entry accounting.
+	if err := AssertBalanced(t.Entries); err != nil {
 		return Transfer{}, err
 	}
+
+	// Apply the balance changes.
+	from.Balance -= req.Amount
+	to.Balance += req.Amount
+	s.accounts[from.ID] = from
+	s.accounts[to.ID] = to
 
 	s.transfers[tid] = t
 	s.byIdemKey[req.IdempotencyKey] = tid
@@ -234,11 +245,6 @@ func (s *MemStore) Capture(_ context.Context, req CaptureRequest, now time.Time)
 
 	from := s.accounts[h.FromAccountID]
 	to := s.accounts[h.ToAccountID]
-	from.Balance -= req.Amount
-	from.Held -= h.Amount // release the whole reservation; remainder returns to Available
-	to.Balance += req.Amount
-	s.accounts[from.ID] = from
-	s.accounts[to.ID] = to
 
 	tid := newID()
 	t := Transfer{
@@ -255,6 +261,19 @@ func (s *MemStore) Capture(_ context.Context, req CaptureRequest, now time.Time)
 			{ID: newID(), TransferID: tid, AccountID: h.ToAccountID, Amount: req.Amount, CreatedAt: now},
 		},
 	}
+
+	// Same invariant as ApplyTransfer: a capture writes entries, so they must
+	// balance before any state changes.
+	if err := AssertBalanced(t.Entries); err != nil {
+		return Transfer{}, err
+	}
+
+	from.Balance -= req.Amount
+	from.Held -= h.Amount // release the whole reservation; remainder returns to Available
+	to.Balance += req.Amount
+	s.accounts[from.ID] = from
+	s.accounts[to.ID] = to
+
 	s.transfers[tid] = t
 	for _, e := range t.Entries {
 		s.entriesByAccount[e.AccountID] = append(s.entriesByAccount[e.AccountID], e)

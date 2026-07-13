@@ -2,7 +2,6 @@ package ledger
 
 import (
 	"context"
-	"fmt"
 	"time"
 )
 
@@ -104,24 +103,9 @@ func (s *Service) Account(ctx context.Context, id string) (Account, error) {
 	return s.store.GetAccount(ctx, id)
 }
 
-// CreateAccount registers an account with a starting balance.
+// CreateAccount registers an account with a starting balance. Safe to retry:
+// an identical re-create is a no-op, while re-creating an existing account with
+// different attributes returns ErrAccountExists rather than resetting money.
 func (s *Service) CreateAccount(ctx context.Context, id, currency string, opening Money) error {
 	return s.store.CreateAccount(ctx, Account{ID: id, Currency: currency, Balance: opening})
-}
-
-// assertBalanced verifies the core double-entry invariant: a transfer's entries
-// must sum to zero. It is a defensive check on an internal invariant; if it ever
-// fires, there is a bug in the store.
-func assertBalanced(entries []Entry) error {
-	if len(entries) < 2 {
-		return fmt.Errorf("ledger: a transfer needs at least two entries, got %d", len(entries))
-	}
-	var sum Money
-	for _, e := range entries {
-		sum += e.Amount
-	}
-	if sum != 0 {
-		return fmt.Errorf("ledger: entries do not balance, sum=%d", sum)
-	}
-	return nil
 }

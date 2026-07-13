@@ -140,6 +140,11 @@ func (s *Store) Capture(ctx context.Context, req ledger.CaptureRequest, now time
 			return err
 		}
 		t := buildTransfer(req.IdempotencyKey, h.FromAccountID, h.ToAccountID, from.Currency, req.Amount, now)
+		// The double-entry invariant is enforced on every path that writes
+		// entries; a failure here rolls the transaction back untouched.
+		if err := ledger.AssertBalanced(t.Entries); err != nil {
+			return err
+		}
 		if err := insertTransferRows(ctx, tx, t); err != nil {
 			if isUniqueViolation(err) {
 				return errDuplicate
